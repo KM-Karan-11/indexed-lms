@@ -17,10 +17,10 @@ const db = getFirestore(firebaseApp);
 // ─── Constants ─────────────────────────────────────────────────────────────
 const LEAVE_TYPES = ["Personal Leave", "Sick Leave", "Unpaid Leave", "Others"];
 const LEAVE_EMOJI = { "Personal Leave": "🌴", "Sick Leave": "🤒", "Unpaid Leave": "💸", "Others": "✨" };
-const SLACK_WEBHOOK = "";
 
+// FIX 1: Only seed the one true admin — never re-seeds deleted users
 const SEED_USERS = [
-  { id: "admin-main", name: "Admin", email: "admin@indexed.com", password: "Admin@2024", role: "admin", manager: null, mustChangePassword: false, profile: {} },
+  { id: "admin-main", name: "Admin", email: "admin@joinindexed.com", password: "Admin@2024", role: "admin", manager: null, mustChangePassword: false, profile: {} },
 ];
 
 // ─── Design tokens ─────────────────────────────────────────────────────────
@@ -166,7 +166,7 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [toast, setToast] = useState(null);
 
-  // Seed initial users if Firestore is empty
+  // FIX 2: Seed only if document doesn't exist — deleted users stay deleted
   useEffect(() => {
     const seedUsers = async () => {
       for (const u of SEED_USERS) {
@@ -193,7 +193,7 @@ export default function App() {
     return () => { unsub1(); unsub2(); unsub3(); };
   }, []);
 
-  // Keep session in sync with live user data
+  // Keep session in sync with live Firestore user data
   useEffect(() => {
     if (session && users.length > 0) {
       const fresh = users.find(u => u.id === session.id);
@@ -215,18 +215,37 @@ export default function App() {
     setPage(user.mustChangePassword ? "changepass" : "dashboard");
   };
 
+  // FIX 3: Forgot password — resets in Firestore and sends email
+  const forgotPassword = async () => {
+    if (!loginEmail) return setLoginError("Enter your email above first 👆");
+    const user = users.find(u => u.email === loginEmail);
+    if (!user) return setLoginError("No account found with that email.");
+    const tempPass = "Reset@" + Math.floor(1000 + Math.random() * 9000);
+    await updateDoc(doc(db, "users", user.id), { password: tempPass, mustChangePassword: true });
+    await callApi("notify", { type: "forgot", userName: user.name, userEmail: user.email, tempPassword: tempPass });
+    setLoginError("");
+    setLoginPass("");
+    notify("Password reset email sent! Check your inbox 📧");
+  };
+
   const logout = () => { setSession(null); sessionStorage.removeItem("lms_session"); setPage("dashboard"); setLoginEmail(""); setLoginPass(""); };
   const nav = (p) => setPage(p);
 
-  if (loading) return <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter, sans-serif" }}><div style={{ textAlign: "center" }}><div style={{ fontSize: 48, marginBottom: 16, animation: "spin 2s linear infinite" }}>🌴</div><div style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Loading Indexed LMS…</div></div><style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style></div>;
+  if (loading) return (
+    <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter, sans-serif" }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 48, marginBottom: 16, animation: "spin 2s linear infinite" }}>🌴</div>
+        <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Loading Indexed LMS…</div>
+      </div>
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
 
-  if (!session) return <LoginPage email={loginEmail} setEmail={setLoginEmail} pass={loginPass} setPass={setLoginPass} error={loginError} onLogin={login} />;
+  if (!session) return <LoginPage email={loginEmail} setEmail={setLoginEmail} pass={loginPass} setPass={setLoginPass} error={loginError} onLogin={login} onForgot={forgotPassword} />;
   if (page === "changepass") return <ChangePassPage session={session} setSession={setSession} setPage={setPage} notify={notify} />;
 
   const liveSession = users.find(u => u.id === session.id) || session;
-  const slackWebhook = settings.slackWebhook || SLACK_WEBHOOK;
-
-  const sharedProps = { session: liveSession, users, requests, settings, slackWebhook, notify, nav };
+  const sharedProps = { session: liveSession, users, requests, settings, notify, nav };
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: C.bg, fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -248,7 +267,7 @@ export default function App() {
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
-function LoginPage({ email, setEmail, pass, setPass, error, onLogin }) {
+function LoginPage({ email, setEmail, pass, setPass, error, onLogin, onForgot }) {
   return (
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", fontFamily: "'Inter', system-ui, sans-serif", overflow: "hidden" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap');@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}@keyframes fadeIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}input:focus{border-color:${C.indigo}!important;box-shadow:0 0 0 3px rgba(99,102,241,0.15);outline:none}`}</style>
@@ -266,10 +285,11 @@ function LoginPage({ email, setEmail, pass, setPass, error, onLogin }) {
         <div style={{ width: "100%", animation: "fadeIn 0.5s ease 0.1s both" }}>
           <p style={{ fontSize: 13, color: C.muted, marginBottom: 6, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>Welcome back 👋</p>
           <h2 style={{ fontSize: 28, fontWeight: 900, color: C.text, margin: "0 0 32px", letterSpacing: "-0.04em" }}>Sign in to LMS</h2>
-          <Inp label="Work email" icon="📧" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@indexed.com" onKeyDown={e => e.key === "Enter" && onLogin()} />
+          <Inp label="Work email" icon="📧" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@joinindexed.com" onKeyDown={e => e.key === "Enter" && onLogin()} />
           <Inp label="Password" icon="🔒" type="password" value={pass} onChange={e => setPass(e.target.value)} placeholder="••••••••" onKeyDown={e => e.key === "Enter" && onLogin()} />
           {error && <div style={{ background: C.dangerLight, border: `1px solid ${C.danger}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.danger, fontWeight: 600 }}>{error}</div>}
-          <button onClick={onLogin} style={{ width: "100%", padding: "14px", borderRadius: 14, background: G.indigo, color: "#fff", border: "none", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 8px 25px rgba(99,102,241,0.4)", letterSpacing: "-0.02em" }}>Sign in →</button>
+          <button onClick={onLogin} style={{ width: "100%", padding: "14px", borderRadius: 14, background: G.indigo, color: "#fff", border: "none", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 8px 25px rgba(99,102,241,0.4)", letterSpacing: "-0.02em", marginBottom: 12 }}>Sign in →</button>
+          <button onClick={onForgot} style={{ width: "100%", padding: "11px", borderRadius: 14, background: "transparent", color: C.muted, border: `1px solid ${C.border}`, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Forgot password? 🔑</button>
         </div>
       </div>
     </div>
@@ -399,7 +419,7 @@ function DashboardPage({ session, users, requests, nav }) {
 }
 
 // ─── Request Leave ────────────────────────────────────────────────────────────
-function RequestPage({ session, users, slackWebhook, notify }) {
+function RequestPage({ session, users, notify }) {
   const [type, setType] = useState(LEAVE_TYPES[0]);
   const [start, setStart] = useState(""), [end, setEnd] = useState(""), [reason, setReason] = useState(""), [busy, setBusy] = useState(false);
   const manager = users.find(u => u.id === session.manager);
@@ -412,8 +432,6 @@ function RequestPage({ session, users, slackWebhook, notify }) {
     const id = Date.now().toString();
     const req = { id, userId: session.id, userEmail: session.email, userName: session.name, type, startDate: start, endDate: end, reason, status: "pending", createdAt: new Date().toISOString(), managerId: session.manager || null, managerEmail: manager?.email || null, managerName: manager?.name || null };
     await setDoc(doc(db, "requests", id), req);
-
-    // Slack notification + email
     await callApi("notify", { type: "new_request", request: req, managerName: manager?.name, days });
     notify(`Request sent! ${manager ? `${manager.name} will review it ✉️` : "Awaiting assignment."}`);
     setStart(""); setEnd(""); setReason(""); setType(LEAVE_TYPES[0]);
@@ -491,7 +509,7 @@ function ApprovalsPage({ session, users, requests, notify }) {
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{emp?.name}</span><StatusChip status={r.status} /></div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>{LEAVE_EMOJI[r.type]} {r.type}</span>
-                    <span style={{ color: C.border }}>·</span>
+                    <span>·</span>
                     <span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>{r.startDate} → {r.endDate}</span>
                     <span style={{ background: C.indigoLight, color: C.indigoDark, fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 100 }}>{days}d</span>
                   </div>
@@ -570,7 +588,7 @@ function AllRequestsPage({ users, requests, notify }) {
 function AdminPage({ users, requests, settings, notify }) {
   const [tab, setTab] = useState("users");
   const [f, setF] = useState({ name: "", email: "", role: "member", manager: "" });
-  const [slack, setSlack] = useState(settings.slackWebhook || SLACK_WEBHOOK);
+  const [slack, setSlack] = useState(settings.slackWebhook || "");
   const managers = users.filter(u => u.role === "manager" || u.role === "admin");
 
   const addUser = async () => {
@@ -637,7 +655,7 @@ function AdminPage({ users, requests, settings, notify }) {
         <GlassCard style={{ maxWidth: 500 }}>
           <h3 style={{ fontSize: 16, fontWeight: 800, color: C.text, margin: "0 0 20px" }}>➕ New Team Member</h3>
           <Inp label="Full Name" icon="👤" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="Jane Smith" />
-          <Inp label="Work Email" icon="📧" type="email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} placeholder="jane@indexed.com" />
+          <Inp label="Work Email" icon="📧" type="email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} placeholder="jane@joinindexed.com" />
           <Sel label="Role" icon="🎯" value={f.role} onChange={e => setF({ ...f, role: e.target.value })}>
             <option value="member">Member</option>
             <option value="manager">Manager</option>
@@ -655,7 +673,7 @@ function AdminPage({ users, requests, settings, notify }) {
       {tab === "slack" && (
         <GlassCard style={{ maxWidth: 540 }}>
           <h3 style={{ fontSize: 16, fontWeight: 800, color: C.text, margin: "0 0 8px" }}>💬 Slack Integration</h3>
-          <p style={{ fontSize: 13, color: C.muted, marginBottom: 18 }}>Notifications fire automatically for new requests, approvals and rejections.</p>
+          <p style={{ fontSize: 13, color: C.muted, marginBottom: 18 }}>Notifications fire for new requests, approvals and rejections.</p>
           <Inp label="Webhook URL" icon="🔗" value={slack} onChange={e => setSlack(e.target.value)} placeholder="https://hooks.slack.com/services/..." />
           <button onClick={saveSlack} style={{ width: "100%", padding: 14, borderRadius: 14, background: G.indigo, color: "#fff", border: "none", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Save Webhook 💬</button>
           {settings.slackWebhook && <div style={{ marginTop: 16, background: "#D1FAE5", borderRadius: 12, padding: "10px 16px", fontSize: 13, fontWeight: 700, color: "#064E3B", textAlign: "center" }}>✅ Slack is connected!</div>}
@@ -666,7 +684,7 @@ function AdminPage({ users, requests, settings, notify }) {
 }
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
-function ProfilePage({ session, users, requests, setSession, notify }) {
+function ProfilePage({ session, requests, setSession, notify }) {
   const saved = session.profile || {};
   const [p, setP] = useState({ photo: saved.photo || "", firstName: session.name.split(" ")[0] || "", lastName: session.name.split(" ").slice(1).join(" ") || "", birthdate: saved.birthdate || "", mobile: saved.mobile || "", city: saved.city || "", country: saved.country || "", jobTitle: saved.jobTitle || "", department: saved.department || "", emergencyName: saved.emergencyName || "", emergencyRelation: saved.emergencyRelation || "", emergencyPhone: saved.emergencyPhone || "", bio: saved.bio || "" });
   const [pwOpen, setPwOpen] = useState(false);
