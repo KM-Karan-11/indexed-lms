@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, deleteDoc, getDoc } from "firebase/firestore";
 
-// ─── Firebase ──────────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyCWQ_BA24ALVPbRaqSZ1X-Ig7zqzQtf7Zk",
   authDomain: "indexed-lms.firebaseapp.com",
@@ -14,23 +13,18 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp);
 
-// ─── Constants ─────────────────────────────────────────────────────────────
 const LEAVE_TYPES = ["Personal Leave", "Sick Leave", "Unpaid Leave", "Others"];
 const LEAVE_EMOJI = { "Personal Leave": "🌴", "Sick Leave": "🤒", "Unpaid Leave": "💸", "Others": "✨" };
 
-// FIX 1: Only seed the one true admin — never re-seeds deleted users
 const SEED_USERS = [
   { id: "admin-main", name: "Admin", email: "admin@joinindexed.com", password: "Admin@2024", role: "admin", manager: null, mustChangePassword: false, profile: {} },
 ];
 
-// ─── Design tokens ─────────────────────────────────────────────────────────
 const C = {
-  dark: "#0B0F1A", darkCard: "#131929", darkBorder: "rgba(255,255,255,0.07)",
-  bg: "#F0F3FF", card: "#FFFFFF", border: "rgba(99,102,241,0.13)",
+  dark: "#0B0F1A", bg: "#F0F3FF", card: "#FFFFFF", border: "rgba(99,102,241,0.13)",
   indigo: "#6366F1", indigoLight: "#EEF2FF", indigoDark: "#4338CA",
   violet: "#8B5CF6", cyan: "#06B6D4", pink: "#EC4899", emerald: "#10B981", amber: "#F59E0B",
-  text: "#0F172A", muted: "#64748B", white: "#FFFFFF",
-  danger: "#EF4444", dangerLight: "#FEF2F2",
+  text: "#0F172A", muted: "#64748B", danger: "#EF4444", dangerLight: "#FEF2F2",
 };
 const G = {
   indigo: "linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)",
@@ -41,19 +35,13 @@ const G = {
   mesh: "radial-gradient(ellipse at 20% 50%, rgba(99,102,241,0.15) 0%, transparent 50%), radial-gradient(ellipse at 80% 20%, rgba(139,92,246,0.12) 0%, transparent 50%), radial-gradient(ellipse at 50% 80%, rgba(6,182,212,0.1) 0%, transparent 50%)",
 };
 
-// ─── API helpers ────────────────────────────────────────────────────────────
 async function callApi(endpoint, body) {
   try {
-    const res = await fetch(`/api/${endpoint}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const res = await fetch(`/api/${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     return res.ok;
   } catch { return false; }
 }
 
-// ─── Shared UI components ───────────────────────────────────────────────────
 const Avatar = ({ user, size = 36 }) => {
   if (user?.profile?.photo) return <img src={user.profile.photo} alt="" style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0, border: "2px solid rgba(99,102,241,0.3)" }} />;
   const name = user?.name || "?";
@@ -105,7 +93,6 @@ const Toast = ({ toast }) => {
   return <div style={{ position: "fixed", bottom: 28, right: 28, zIndex: 9999, background: toast.type === "error" ? C.danger : C.dark, color: "#fff", padding: "14px 22px", borderRadius: 16, fontWeight: 700, fontSize: 14, maxWidth: 360, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", display: "flex", alignItems: "center", gap: 10, animation: "slideUp 0.3s ease" }}><span style={{ fontSize: 18 }}>{toast.type === "error" ? "⚠️" : "🎉"}</span>{toast.msg}</div>;
 };
 
-// ─── Nav ────────────────────────────────────────────────────────────────────
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: "⚡", roles: ["admin", "manager", "member"] },
   { id: "request", label: "Request Leave", icon: "✈️", roles: ["admin", "manager", "member"] },
@@ -153,7 +140,6 @@ const Sidebar = ({ session, page, nav, logout }) => {
   );
 };
 
-// ─── Main App ────────────────────────────────────────────────────────────────
 export default function App() {
   const [users, setUsers] = useState([]);
   const [requests, setRequests] = useState([]);
@@ -166,7 +152,6 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [toast, setToast] = useState(null);
 
-  // FIX 2: Seed only if document doesn't exist — deleted users stay deleted
   useEffect(() => {
     const seedUsers = async () => {
       for (const u of SEED_USERS) {
@@ -178,22 +163,13 @@ export default function App() {
     seedUsers();
   }, []);
 
-  // Real-time listeners
   useEffect(() => {
-    const unsub1 = onSnapshot(collection(db, "users"), snap => {
-      setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    });
-    const unsub2 = onSnapshot(collection(db, "requests"), snap => {
-      setRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsub3 = onSnapshot(doc(db, "settings", "main"), snap => {
-      if (snap.exists()) setSettings(snap.data());
-    });
+    const unsub1 = onSnapshot(collection(db, "users"), snap => { setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); });
+    const unsub2 = onSnapshot(collection(db, "requests"), snap => { setRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))); });
+    const unsub3 = onSnapshot(doc(db, "settings", "main"), snap => { if (snap.exists()) setSettings(snap.data()); });
     return () => { unsub1(); unsub2(); unsub3(); };
   }, []);
 
-  // Keep session in sync with live Firestore user data
   useEffect(() => {
     if (session && users.length > 0) {
       const fresh = users.find(u => u.id === session.id);
@@ -215,7 +191,6 @@ export default function App() {
     setPage(user.mustChangePassword ? "changepass" : "dashboard");
   };
 
-  // FIX 3: Forgot password — resets in Firestore and sends email
   const forgotPassword = async () => {
     if (!loginEmail) return setLoginError("Enter your email above first 👆");
     const user = users.find(u => u.email === loginEmail);
@@ -225,7 +200,7 @@ export default function App() {
     await callApi("notify", { type: "forgot", userName: user.name, userEmail: user.email, tempPassword: tempPass });
     setLoginError("");
     setLoginPass("");
-    notify("Password reset email sent! Check your inbox 📧");
+    notify("Password reset sent to your Slack & email 📧");
   };
 
   const logout = () => { setSession(null); sessionStorage.removeItem("lms_session"); setPage("dashboard"); setLoginEmail(""); setLoginPass(""); };
@@ -266,7 +241,6 @@ export default function App() {
   );
 }
 
-// ─── Login ────────────────────────────────────────────────────────────────────
 function LoginPage({ email, setEmail, pass, setPass, error, onLogin, onForgot }) {
   return (
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", fontFamily: "'Inter', system-ui, sans-serif", overflow: "hidden" }}>
@@ -276,7 +250,7 @@ function LoginPage({ email, setEmail, pass, setPass, error, onLogin, onForgot })
           <div style={{ width: 80, height: 80, borderRadius: 24, background: G.indigo, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 28px", boxShadow: "0 20px 60px rgba(99,102,241,0.5)", animation: "float 4s ease-in-out infinite" }}><span style={{ fontSize: 40 }}>🌴</span></div>
           <h1 style={{ fontSize: 42, fontWeight: 900, color: "#fff", margin: "0 0 12px", letterSpacing: "-0.05em", lineHeight: 1.1 }}>Indexed<br /><span style={{ background: "linear-gradient(135deg, #a5b4fc, #c4b5fd)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>LMS</span></h1>
           <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 16, margin: "0 0 48px", lineHeight: 1.6 }}>Leave Management System<br />by Indexed</p>
-          {[["✈️", "Request leave in seconds"], ["📋", "Real-time approvals"], ["💬", "Slack notifications"], ["📧", "Email alerts"]].map(([icon, text]) => (
+          {[["✈️", "Request leave in seconds"], ["📋", "Real-time approvals"], ["💬", "Slack DMs + OOO status"], ["📧", "Email alerts"]].map(([icon, text]) => (
             <div key={text} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 100, padding: "8px 16px", margin: "4px", fontSize: 13, color: "rgba(255,255,255,0.7)", fontWeight: 500 }}><span>{icon}</span>{text}</div>
           ))}
         </div>
@@ -296,7 +270,6 @@ function LoginPage({ email, setEmail, pass, setPass, error, onLogin, onForgot })
   );
 }
 
-// ─── Change Password ──────────────────────────────────────────────────────────
 function ChangePassPage({ session, setSession, setPage, notify }) {
   const [cur, setCur] = useState(""), [nxt, setNxt] = useState(""), [conf, setConf] = useState(""), [err, setErr] = useState("");
   const save = async () => {
@@ -327,7 +300,6 @@ function ChangePassPage({ session, setSession, setPage, notify }) {
   );
 }
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
 function DashboardPage({ session, users, requests, nav }) {
   const myReqs = requests.filter(r => r.userId === session.id).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const counts = { total: myReqs.length, approved: myReqs.filter(r => r.status === "approved").length, pending: myReqs.filter(r => r.status === "pending").length, rejected: myReqs.filter(r => r.status === "rejected").length };
@@ -335,6 +307,10 @@ function DashboardPage({ session, users, requests, nav }) {
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const greetEmoji = hour < 12 ? "☀️" : hour < 17 ? "👋" : "🌙";
   const pendingApprovals = (session.role === "manager" || session.role === "admin") ? requests.filter(r => r.managerId === session.id && r.status === "pending") : [];
+
+  // Who's on leave today
+  const today = new Date().toISOString().split("T")[0];
+  const onLeaveToday = requests.filter(r => r.status === "approved" && r.startDate <= today && r.endDate >= today);
 
   return (
     <div>
@@ -365,14 +341,14 @@ function DashboardPage({ session, users, requests, nav }) {
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <GlassCard>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
             <h3 style={{ fontSize: 15, fontWeight: 800, color: C.text, margin: 0 }}>📅 Recent Requests</h3>
             <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>{myReqs.length} total</span>
           </div>
           {myReqs.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "28px 0" }}><div style={{ fontSize: 36, marginBottom: 10 }}>🏖️</div><p style={{ color: C.muted, fontSize: 14, margin: 0, fontWeight: 600 }}>No requests yet</p><p style={{ color: C.muted, fontSize: 12, margin: "4px 0 0" }}>Time to plan a vacay?</p></div>
+            <div style={{ textAlign: "center", padding: "28px 0" }}><div style={{ fontSize: 36, marginBottom: 10 }}>🏖️</div><p style={{ color: C.muted, fontSize: 14, margin: 0, fontWeight: 600 }}>No requests yet</p></div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {myReqs.slice(0, 4).map(r => {
@@ -414,11 +390,29 @@ function DashboardPage({ session, users, requests, nav }) {
           )}
         </GlassCard>
       </div>
+
+      {/* Who's out today */}
+      {onLeaveToday.length > 0 && (
+        <GlassCard>
+          <h3 style={{ fontSize: 15, fontWeight: 800, color: C.text, margin: "0 0 14px" }}>🏖️ Out of Office Today</h3>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {onLeaveToday.map(r => {
+              const emp = users.find(u => u.id === r.userId);
+              return (
+                <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 100 }}>
+                  <Avatar user={emp} size={24} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{emp?.name?.split(" ")[0]}</span>
+                  <span style={{ fontSize: 11, color: C.muted }}>{LEAVE_EMOJI[r.type]}</span>
+                </div>
+              );
+            })}
+          </div>
+        </GlassCard>
+      )}
     </div>
   );
 }
 
-// ─── Request Leave ────────────────────────────────────────────────────────────
 function RequestPage({ session, users, notify }) {
   const [type, setType] = useState(LEAVE_TYPES[0]);
   const [start, setStart] = useState(""), [end, setEnd] = useState(""), [reason, setReason] = useState(""), [busy, setBusy] = useState(false);
@@ -472,7 +466,6 @@ function RequestPage({ session, users, notify }) {
   );
 }
 
-// ─── Approvals ────────────────────────────────────────────────────────────────
 function ApprovalsPage({ session, users, requests, notify }) {
   const [filter, setFilter] = useState("all");
   const reqs = requests.filter(r => r.managerId === session.id && (filter === "all" || r.status === filter)).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -482,7 +475,7 @@ function ApprovalsPage({ session, users, requests, notify }) {
     const emp = users.find(u => u.id === r?.userId);
     await updateDoc(doc(db, "requests", id), { status: decision });
     await callApi("notify", { type: "decision", decision, request: r, employeeName: emp?.name, employeeEmail: emp?.email, managerName: session.name });
-    notify(decision === "approved" ? `Approved! ${emp?.name?.split(" ")[0]} will be notified 🎉` : `Declined. ${emp?.name?.split(" ")[0]} has been notified.`);
+    notify(decision === "approved" ? `Approved! ${emp?.name?.split(" ")[0]} notified + Slack OOO set 🎉` : `Declined. ${emp?.name?.split(" ")[0]} has been notified.`);
   };
 
   return (
@@ -530,7 +523,6 @@ function ApprovalsPage({ session, users, requests, notify }) {
   );
 }
 
-// ─── All Requests ─────────────────────────────────────────────────────────────
 function AllRequestsPage({ users, requests, notify }) {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -584,11 +576,12 @@ function AllRequestsPage({ users, requests, notify }) {
   );
 }
 
-// ─── Admin ────────────────────────────────────────────────────────────────────
 function AdminPage({ users, requests, settings, notify }) {
   const [tab, setTab] = useState("users");
   const [f, setF] = useState({ name: "", email: "", role: "member", manager: "" });
   const [slack, setSlack] = useState(settings.slackWebhook || "");
+  const [editing, setEditing] = useState(null);
+  const [editF, setEditF] = useState({ role: "member", manager: "" });
   const managers = users.filter(u => u.role === "manager" || u.role === "admin");
 
   const addUser = async () => {
@@ -599,7 +592,7 @@ function AdminPage({ users, requests, settings, notify }) {
     const newUser = { id, name: f.name, email: f.email, password: pass, role: f.role, manager: f.manager || null, mustChangePassword: true, profile: {} };
     await setDoc(doc(db, "users", id), newUser);
     await callApi("notify", { type: "invite", userName: f.name, userEmail: f.email, tempPassword: pass });
-    notify(`${f.name} added! Invite email sent 📧`);
+    notify(`${f.name} added! Invite sent via Slack & email 📧`);
     setF({ name: "", email: "", role: "member", manager: "" });
   };
 
@@ -609,6 +602,12 @@ function AdminPage({ users, requests, settings, notify }) {
     notify("Member removed.");
   };
 
+  const saveEdit = async () => {
+    await updateDoc(doc(db, "users", editing), { role: editF.role, manager: editF.manager || null });
+    notify("Member updated! ✅");
+    setEditing(null);
+  };
+
   const saveSlack = async () => {
     await setDoc(doc(db, "settings", "main"), { slackWebhook: slack }, { merge: true });
     notify("Slack webhook saved! 💬");
@@ -616,6 +615,30 @@ function AdminPage({ users, requests, settings, notify }) {
 
   return (
     <div>
+      {/* Edit modal */}
+      {editing && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, backdropFilter: "blur(4px)" }}>
+          <div style={{ background: C.card, borderRadius: 24, padding: 36, width: 440, boxShadow: "0 30px 80px rgba(0,0,0,0.3)" }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>✏️</div>
+            <h3 style={{ fontSize: 20, fontWeight: 900, color: C.text, margin: "0 0 4px", letterSpacing: "-0.03em" }}>Edit Member</h3>
+            <p style={{ fontSize: 13, color: C.muted, margin: "0 0 24px" }}>{users.find(u => u.id === editing)?.name} · {users.find(u => u.id === editing)?.email}</p>
+            <Sel label="Role" icon="🎯" value={editF.role} onChange={e => setEditF({ ...editF, role: e.target.value })}>
+              <option value="member">Member</option>
+              <option value="manager">Manager</option>
+              <option value="admin">Admin</option>
+            </Sel>
+            <Sel label="Assign Manager" icon="👔" value={editF.manager} onChange={e => setEditF({ ...editF, manager: e.target.value })}>
+              <option value="">No manager</option>
+              {users.filter(u => u.id !== editing && (u.role === "manager" || u.role === "admin")).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </Sel>
+            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+              <button onClick={saveEdit} style={{ flex: 1, padding: "13px", borderRadius: 12, background: G.indigo, color: "#fff", border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 4px 15px rgba(99,102,241,0.35)" }}>Save Changes</button>
+              <button onClick={() => setEditing(null)} style={{ flex: 1, padding: "13px", borderRadius: 12, background: C.bg, color: C.muted, border: `1px solid ${C.border}`, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ marginBottom: 28 }}><h2 style={{ fontSize: 26, fontWeight: 900, color: C.text, margin: "0 0 4px", letterSpacing: "-0.04em" }}>Admin ⚙️</h2><p style={{ color: C.muted, fontSize: 14, margin: 0, fontWeight: 500 }}>Manage your team and integrations</p></div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
         {[{ label: "Team Members", val: users.length, icon: "👥", g: G.indigo }, { label: "Total Requests", val: requests.length, icon: "📊", g: G.cyan }, { label: "Pending", val: requests.filter(r => r.status === "pending").length, icon: "⏳", g: G.amber }].map(s => (
@@ -645,6 +668,7 @@ function AdminPage({ users, requests, settings, notify }) {
                 {u.manager && <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>Reports to {users.find(m => m.id === u.manager)?.name}</div>}
               </div>
               {u.mustChangePassword && <span style={{ fontSize: 11, background: "#FEF3C7", color: "#92400E", padding: "3px 10px", borderRadius: 100, fontWeight: 700 }}>⚡ Must reset pw</span>}
+              <button onClick={() => { setEditing(u.id); setEditF({ role: u.role, manager: u.manager || "" }); }} style={{ padding: "7px 14px", borderRadius: 10, background: C.indigoLight, color: C.indigoDark, border: `1.5px solid ${C.indigo}22`, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", marginRight: 6 }}>✏️ Edit</button>
               {u.id !== "admin-main" && <button onClick={() => removeUser(u.id)} style={{ padding: "7px 14px", borderRadius: 10, background: C.dangerLight, color: C.danger, border: `1.5px solid ${C.danger}22`, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Remove</button>}
             </GlassCard>
           ))}
@@ -665,7 +689,7 @@ function AdminPage({ users, requests, settings, notify }) {
             <option value="">No manager</option>
             {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
           </Sel>
-          <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B33", borderRadius: 12, padding: "12px 16px", marginBottom: 18, fontSize: 13, color: "#92400E", fontWeight: 600 }}>📧 An invite email with login details will be sent automatically.</div>
+          <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B33", borderRadius: 12, padding: "12px 16px", marginBottom: 18, fontSize: 13, color: "#92400E", fontWeight: 600 }}>📧 Invite sent via Slack DM + email automatically.</div>
           <button onClick={addUser} style={{ width: "100%", padding: 14, borderRadius: 14, background: G.indigo, color: "#fff", border: "none", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 8px 25px rgba(99,102,241,0.35)" }}>Add Member & Send Invite 🚀</button>
         </GlassCard>
       )}
@@ -673,8 +697,8 @@ function AdminPage({ users, requests, settings, notify }) {
       {tab === "slack" && (
         <GlassCard style={{ maxWidth: 540 }}>
           <h3 style={{ fontSize: 16, fontWeight: 800, color: C.text, margin: "0 0 8px" }}>💬 Slack Integration</h3>
-          <p style={{ fontSize: 13, color: C.muted, marginBottom: 18 }}>Notifications fire for new requests, approvals and rejections.</p>
-          <Inp label="Webhook URL" icon="🔗" value={slack} onChange={e => setSlack(e.target.value)} placeholder="https://hooks.slack.com/services/..." />
+          <p style={{ fontSize: 13, color: C.muted, marginBottom: 18 }}>Slack DMs fire for all events. General channel also gets pinged.</p>
+          <Inp label="Webhook URL (general channel)" icon="🔗" value={slack} onChange={e => setSlack(e.target.value)} placeholder="https://hooks.slack.com/services/..." />
           <button onClick={saveSlack} style={{ width: "100%", padding: 14, borderRadius: 14, background: G.indigo, color: "#fff", border: "none", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Save Webhook 💬</button>
           {settings.slackWebhook && <div style={{ marginTop: 16, background: "#D1FAE5", borderRadius: 12, padding: "10px 16px", fontSize: 13, fontWeight: 700, color: "#064E3B", textAlign: "center" }}>✅ Slack is connected!</div>}
         </GlassCard>
@@ -683,7 +707,6 @@ function AdminPage({ users, requests, settings, notify }) {
   );
 }
 
-// ─── Profile ──────────────────────────────────────────────────────────────────
 function ProfilePage({ session, requests, setSession, notify }) {
   const saved = session.profile || {};
   const [p, setP] = useState({ photo: saved.photo || "", firstName: session.name.split(" ")[0] || "", lastName: session.name.split(" ").slice(1).join(" ") || "", birthdate: saved.birthdate || "", mobile: saved.mobile || "", city: saved.city || "", country: saved.country || "", jobTitle: saved.jobTitle || "", department: saved.department || "", emergencyName: saved.emergencyName || "", emergencyRelation: saved.emergencyRelation || "", emergencyPhone: saved.emergencyPhone || "", bio: saved.bio || "" });
