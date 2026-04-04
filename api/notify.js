@@ -3,7 +3,9 @@ const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const APP_URL = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://indexed-lms.vercel.app";
 
-// ─── General Slack channel via webhook ────────────────────────────────────
+const LEAVE_EMOJI = { "Personal Leave": "🌴", "Sick Leave": "🤒", "Unpaid Leave": "💸", "Others": "✨" };
+
+// ─── General Slack channel ────────────────────────────────────────────────
 async function sendSlackChannel(text) {
   if (!SLACK_WEBHOOK) return;
   await fetch(SLACK_WEBHOOK, {
@@ -13,7 +15,7 @@ async function sendSlackChannel(text) {
   }).catch(() => {});
 }
 
-// ─── Look up Slack user ID by email ──────────────────────────────────────
+// ─── Get Slack user ID by email ───────────────────────────────────────────
 async function getSlackUserId(email) {
   if (!SLACK_BOT_TOKEN || !email) return null;
   try {
@@ -25,7 +27,7 @@ async function getSlackUserId(email) {
   } catch { return null; }
 }
 
-// ─── Send Slack DM to a user by email ────────────────────────────────────
+// ─── Send Slack DM ────────────────────────────────────────────────────────
 async function sendSlackDM(email, text, blocks) {
   if (!SLACK_BOT_TOKEN || !email) return;
   const userId = await getSlackUserId(email);
@@ -39,7 +41,46 @@ async function sendSlackDM(email, text, blocks) {
   }).catch(() => {});
 }
 
-// ─── Email via Resend (backup) ────────────────────────────────────────────
+// ─── Set Slack OOO status for a user ─────────────────────────────────────
+// Sets status emoji + text + expiry on the day leave ends
+async function setSlackOOO(email, leaveType, endDate) {
+  if (!SLACK_BOT_TOKEN || !email) return;
+  const userId = await getSlackUserId(email);
+  if (!userId) return;
+
+  const emoji = { "Personal Leave": "palm_tree", "Sick Leave": "face_with_thermometer", "Unpaid Leave": "money_with_wings", "Others": "calendar" }[leaveType] || "palm_tree";
+  const statusText = `OOO – ${leaveType}`;
+
+  // Expiry = end of the last day of leave (midnight UTC)
+  const expiryTs = Math.floor(new Date(endDate + "T23:59:59Z").getTime() / 1000);
+
+  await fetch("https://slack.com/api/users.profile.set", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
+    body: JSON.stringify({
+      user: userId,
+      profile: {
+        status_text: statusText,
+        status_emoji: `:${emoji}:`,
+        status_expiration: expiryTs,
+      },
+    }),
+  }).catch(() => {});
+}
+
+// ─── Clear Slack OOO status ───────────────────────────────────────────────
+async function clearSlackOOO(email) {
+  if (!SLACK_BOT_TOKEN || !email) return;
+  const userId = await getSlackUserId(email);
+  if (!userId) return;
+  await fetch("https://slack.com/api/users.profile.set", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
+    body: JSON.stringify({ user: userId, profile: { status_text: "", status_emoji: "", status_expiration: 0 } }),
+  }).catch(() => {});
+}
+
+// ─── Email via Resend ─────────────────────────────────────────────────────
 async function sendEmail(to, subject, html) {
   if (!RESEND_API_KEY) return;
   await fetch("https://api.resend.com/emails", {
@@ -59,13 +100,11 @@ export default async function handler(req, res) {
 
   const { type, request, decision, employeeName, employeeEmail, managerName, days, userName, userEmail, tempPassword } = req.body;
 
-  const leaveEmoji = { "Personal Leave": "🌴", "Sick Leave": "🤒", "Unpaid Leave": "💸", "Others": "✨" };
-
   try {
 
-    // ── New leave request ────────────────────────────────────────────────
+    // ── New leave request ─────────────────────────────────────────────────
     if (type === "new_request") {
-      const emoji = leaveEmoji[request.type] || "📋";
+      const emoji = LEAVE_EMOJI[request.type] || "📋";
 
       // Slack DM → manager
       await sendSlackDM(request.managerEmail,
@@ -95,11 +134,12 @@ export default async function handler(req, res) {
       await sendSlackChannel(`${emoji} *${request.userName}* submitted a leave request · Manager: ${request.managerName || "Unassigned"}`);
     }
 
-    // ── Decision: approved or rejected ───────────────────────────────────
+    // ── Approval / Rejection ──────────────────────────────────────────────
     if (type === "decision") {
       const approved = decision === "approved";
       const emoji = approved ? "✅" : "❌";
       const color = approved ? "#10B981" : "#EF4444";
+      const leaveEmoji = LEAVE_EMOJI[request.type] || "📋";
 
       // Slack DM → employee
       await sendSlackDM(employeeEmail,
@@ -111,24 +151,33 @@ export default async function handler(req, res) {
             { type: "mrkdwn", text: `*Type:*\n${request.type}` },
             { type: "mrkdwn", text: `*Dates:*\n${request.startDate} → ${request.endDate}` },
           ]},
-          { type: "section", text: { type: "mrkdwn", text: approved ? `Enjoy your time off! 🌴\n<${APP_URL}|View on Indexed LMS>` : `Please speak to your manager if you have questions.\n<${APP_URL}|View on Indexed LMS>` } },
+          { type: "section", text: { type: "mrkdwn", text: approved ? `Your Slack status has been set to OOO automatically 🌴\n\n<${APP_URL}|View on Indexed LMS>` : `Please speak to your manager if you have questions.\n\n<${APP_URL}|View on Indexed LMS>` } },
         ]
       );
+
+      // If approved → set Slack OOO status automatically
+      if (approved && employeeEmail) {
+        await setSlackOOO(employeeEmail, request.type, request.endDate);
+      }
+
+      // If rejected → clear any OOO status just in case
+      if (!approved && employeeEmail) {
+        await clearSlackOOO(employeeEmail);
+      }
 
       // Email backup → employee
       if (employeeEmail) {
         await sendEmail(employeeEmail, `${emoji} Your leave has been ${decision}`,
-          emailBase(`<h2 style="color:${color}">${emoji} Leave ${approved ? "Approved!" : "Rejected"}</h2><p>Hi <strong>${employeeName}</strong>,</p><p>Your leave has been <strong style="color:${color}">${decision}</strong> by <strong>${managerName}</strong>.</p><div class="info-box"><div class="info-row"><span class="info-label">Type</span><span class="info-val">${request.type}</span></div><div class="info-row"><span class="info-label">Dates</span><span class="info-val">${request.startDate} → ${request.endDate}</span></div><div class="info-row"><span class="info-label">Status</span><span class="info-val" style="color:${color}">${decision.toUpperCase()}</span></div></div>${approved ? "<p>Enjoy your time off! 🌴</p>" : "<p>Please speak to your manager if you have questions.</p>"}<p style="text-align:center"><a href="${APP_URL}" class="btn" style="background:linear-gradient(135deg,#6366F1,#8B5CF6);color:#fff">View on Indexed LMS</a></p>`)
+          emailBase(`<h2 style="color:${color}">${emoji} Leave ${approved ? "Approved!" : "Rejected"}</h2><p>Hi <strong>${employeeName}</strong>,</p><p>Your leave has been <strong style="color:${color}">${decision}</strong> by <strong>${managerName}</strong>.</p><div class="info-box"><div class="info-row"><span class="info-label">Type</span><span class="info-val">${request.type}</span></div><div class="info-row"><span class="info-label">Dates</span><span class="info-val">${request.startDate} → ${request.endDate}</span></div><div class="info-row"><span class="info-label">Status</span><span class="info-val" style="color:${color}">${decision.toUpperCase()}</span></div></div>${approved ? "<p>Your Slack status has been automatically set to OOO 🌴</p>" : "<p>Please speak to your manager if you have questions.</p>"}<p style="text-align:center"><a href="${APP_URL}" class="btn" style="background:linear-gradient(135deg,#6366F1,#8B5CF6);color:#fff">View on Indexed LMS</a></p>`)
         );
       }
 
       // General channel ping
-      await sendSlackChannel(`${emoji} *${employeeName}*'s leave has been *${decision}* by ${managerName}`);
+      await sendSlackChannel(`${emoji} *${employeeName}*'s leave has been *${decision}* by ${managerName}${approved ? ` · OOO status set until ${request.endDate} 🌴` : ""}`);
     }
 
-    // ── Invite / Welcome new user ────────────────────────────────────────
+    // ── Invite new user ───────────────────────────────────────────────────
     if (type === "invite") {
-      // Slack DM → new user
       await sendSlackDM(userEmail,
         `🌴 Welcome to Indexed LMS, ${userName}!`,
         [
@@ -142,18 +191,15 @@ export default async function handler(req, res) {
         ]
       );
 
-      // Email backup → new user
       await sendEmail(userEmail, `🌴 Welcome to Indexed LMS!`,
         emailBase(`<h2>Welcome to Indexed LMS! 🎉</h2><p>Hi <strong>${userName}</strong>,</p><p>You've been added to <strong>Indexed LMS</strong>.</p><div class="info-box"><div class="info-row"><span class="info-label">Login URL</span><span class="info-val"><a href="${APP_URL}" style="color:#6366F1">${APP_URL}</a></span></div><div class="info-row"><span class="info-label">Email</span><span class="info-val">${userEmail}</span></div><div class="info-row"><span class="info-label">Temp Password</span><span class="info-val" style="font-family:monospace;background:#F0F3FF;padding:2px 8px;border-radius:6px">${tempPassword}</span></div></div><p>⚡ You'll be asked to set a new password on your first login.</p><p style="text-align:center"><a href="${APP_URL}" class="btn" style="background:linear-gradient(135deg,#6366F1,#8B5CF6);color:#fff">Sign in →</a></p>`)
       );
 
-      // General channel
       await sendSlackChannel(`👋 *${userName}* has joined Indexed LMS! Welcome to the team 🎉`);
     }
 
-    // ── Forgot password ──────────────────────────────────────────────────
+    // ── Forgot password ───────────────────────────────────────────────────
     if (type === "forgot") {
-      // Slack DM → user
       await sendSlackDM(userEmail,
         `🔑 Your Indexed LMS password has been reset`,
         [
@@ -166,7 +212,6 @@ export default async function handler(req, res) {
         ]
       );
 
-      // Email backup → user
       await sendEmail(userEmail, `🔑 Password reset — Indexed LMS`,
         emailBase(`<h2>Password Reset 🔑</h2><p>Hi <strong>${userName}</strong>,</p><p>A password reset was requested for your account.</p><div class="info-box"><div class="info-row"><span class="info-label">Temp Password</span><span class="info-val" style="font-family:monospace;background:#F0F3FF;padding:2px 8px;border-radius:6px">${tempPassword}</span></div></div><p>⚡ You'll be asked to set a new password when you log in.</p><p style="text-align:center"><a href="${APP_URL}" class="btn" style="background:linear-gradient(135deg,#6366F1,#8B5CF6);color:#fff">Sign in →</a></p>`)
       );
