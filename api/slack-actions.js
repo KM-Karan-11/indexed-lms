@@ -1,7 +1,8 @@
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
+const APP_URL = "https://indexed-lms.vercel.app";
+
 const FIREBASE_API_KEY = "AIzaSyCWQ_BA24ALVPbRaqSZ1X-Ig7zqzQtf7Zk";
 const FIREBASE_PROJECT = "indexed-lms";
-const APP_URL = "https://indexed-lms.vercel.app";
 
 const LEAVE_EMOJI = {
   "Personal Leave": "🌴",
@@ -10,14 +11,10 @@ const LEAVE_EMOJI = {
   "Others": "✨",
 };
 
-// ─── Tell Vercel NOT to parse the body — we need the raw form data ─────────
 export const config = {
-  api: {
-    bodyParser: false,
-  },
+  api: { bodyParser: false },
 };
 
-// ─── Read raw body from request ───────────────────────────────────────────
 function getRawBody(req) {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -27,22 +24,20 @@ function getRawBody(req) {
   });
 }
 
-// ─── Firestore REST API ───────────────────────────────────────────────────
+// ─── Firestore REST — no auth needed (test mode rules allow all) ──────────
 async function updateRequestStatus(requestId, status) {
+  const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/requests/${requestId}?updateMask.fieldPaths=status&key=${FIREBASE_API_KEY}`;
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/requests/${requestId}?updateMask.fieldPaths=status&key=${FIREBASE_API_KEY}`;
     const res = await fetch(url, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fields: { status: { stringValue: status } } }),
     });
-    if (!res.ok) {
-      const err = await res.text();
-      console.error("Firestore update failed:", err);
-    }
+    const text = await res.text();
+    console.log("Firestore response:", res.status, text.substring(0, 100));
     return res.ok;
   } catch (e) {
-    console.error("Firestore error:", e);
+    console.error("Firestore fetch error:", e.message);
     return false;
   }
 }
@@ -56,7 +51,7 @@ async function getSlackUserId(email) {
       { headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` } }
     );
     const data = await res.json();
-    return data.ok && data.user?.id ? data.user.id : null;
+    return data.ok ? data.user?.id : null;
   } catch { return null; }
 }
 
@@ -64,14 +59,13 @@ async function sendSlackDM(email, text, blocks) {
   if (!SLACK_BOT_TOKEN || !email) return;
   const userId = await getSlackUserId(email);
   if (!userId) return;
-  await fetch("https://slack.com/api/chat.postMessage", {
+  const r = await fetch("https://slack.com/api/chat.postMessage", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
-    },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
     body: JSON.stringify({ channel: userId, text, ...(blocks ? { blocks } : {}) }),
-  }).catch(e => console.error("DM error:", e));
+  });
+  const d = await r.json();
+  if (!d.ok) console.error("DM error:", d.error);
 }
 
 async function setSlackOOO(email, leaveType, endDate) {
@@ -87,10 +81,7 @@ async function setSlackOOO(email, leaveType, endDate) {
   const expiryTs = Math.floor(new Date(endDate + "T23:59:59Z").getTime() / 1000);
   await fetch("https://slack.com/api/users.profile.set", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
-    },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
     body: JSON.stringify({
       user: userId,
       profile: {
@@ -99,40 +90,24 @@ async function setSlackOOO(email, leaveType, endDate) {
         status_expiration: expiryTs,
       },
     }),
-  }).catch(e => console.error("OOO error:", e));
+  }).catch(() => {});
 }
 
-// ─── Main handler ─────────────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  // Read and parse raw body from Slack
   let payload;
   try {
-    const rawBody = await getRawBody(req);
-    console.log("Raw body received:", rawBody.substring(0, 200));
-
-    // Slack sends: payload=<url-encoded-json>
-    const params = new URLSearchParams(rawBody);
-    const payloadStr = params.get("payload");
-
-    if (payloadStr) {
-      payload = JSON.parse(payloadStr);
-    } else {
-      // Fallback: try parsing as raw JSON
-      payload = JSON.parse(rawBody);
-    }
+    const raw = await getRawBody(req);
+    const params = new URLSearchParams(raw);
+    payload = JSON.parse(params.get("payload") || raw);
   } catch (e) {
-    console.error("Parse error:", e);
-    return res.status(200).end(); // Always 200 to Slack
-  }
-
-  console.log("Payload type:", payload?.type, "Actions:", payload?.actions?.length);
-
-  // Must respond 200 to Slack within 3 seconds
-  if (payload.type !== "block_actions") {
+    console.error("Parse error:", e.message);
     return res.status(200).end();
   }
+
+  if (payload.type !== "block_actions") return res.status(200).end();
 
   const action = payload.actions?.[0];
   if (!action) return res.status(200).end();
@@ -141,26 +116,23 @@ export default async function handler(req, res) {
   const emoji = decision === "approved" ? "✅" : "❌";
 
   let data;
-  try {
-    data = JSON.parse(action.value);
-  } catch (e) {
-    console.error("Action value parse error:", e);
-    return res.status(200).end();
-  }
+  try { data = JSON.parse(action.value); } catch { return res.status(200).end(); }
 
   const { requestId, employeeEmail, employeeName, leaveType, startDate, endDate, managerName } = data;
   const leaveEmoji = LEAVE_EMOJI[leaveType] || "📋";
 
-  // ✅ Respond to Slack immediately (within 3s)
-  res.status(200).json({ text: `Processing ${decision}…` });
+  console.log(`Action: ${decision} | Request: ${requestId} | Employee: ${employeeName}`);
 
-  // Now do the async work after responding
+  // Respond to Slack immediately (must be within 3s)
+  res.status(200).json({ text: `${emoji} ${decision}…` });
+
+  // Do everything after responding
   try {
     // 1. Update Firestore
-    const updated = await updateRequestStatus(requestId, decision);
-    console.log("Firestore updated:", updated, requestId, decision);
+    const ok = await updateRequestStatus(requestId, decision);
+    console.log("Firestore update:", ok ? "SUCCESS" : "FAILED");
 
-    // 2. Update the original Slack message (replace buttons with outcome)
+    // 2. Update original Slack message — replace buttons with result
     if (payload.response_url) {
       await fetch(payload.response_url, {
         method: "POST",
@@ -168,73 +140,34 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           replace_original: true,
           blocks: [
-            {
-              type: "header",
-              text: { type: "plain_text", text: `${leaveEmoji} Leave Request — ${decision.toUpperCase()}` },
-            },
-            {
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text: `*${employeeName}*'s leave has been *${decision}* ${emoji} by <@${payload.user?.id}>.`,
-              },
-            },
-            {
-              type: "section",
-              fields: [
-                { type: "mrkdwn", text: `*Type:*\n${leaveType}` },
-                { type: "mrkdwn", text: `*Dates:*\n${startDate} → ${endDate}` },
-              ],
-            },
-            {
-              type: "context",
-              elements: [{ type: "mrkdwn", text: `<${APP_URL}|View on Indexed LMS>` }],
-            },
+            { type: "header", text: { type: "plain_text", text: `${leaveEmoji} Leave — ${decision.toUpperCase()} ${emoji}` } },
+            { type: "section", text: { type: "mrkdwn", text: `*${employeeName}*'s leave has been *${decision}* by <@${payload.user?.id}>.` } },
+            { type: "section", fields: [
+              { type: "mrkdwn", text: `*Type:*\n${leaveType}` },
+              { type: "mrkdwn", text: `*Dates:*\n${startDate} → ${endDate}` },
+            ]},
+            { type: "context", elements: [{ type: "mrkdwn", text: `<${APP_URL}|View on Indexed LMS>` }] },
           ],
         }),
-      }).catch(e => console.error("response_url error:", e));
+      }).catch(e => console.error("response_url error:", e.message));
     }
 
     // 3. DM the employee
-    await sendSlackDM(
-      employeeEmail,
-      `${emoji} Your leave has been ${decision}`,
-      [
-        { type: "header", text: { type: "plain_text", text: `${emoji} Leave ${decision === "approved" ? "Approved" : "Rejected"}` } },
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: decision === "approved"
-              ? `Great news *${employeeName}*! Your leave has been *approved* by *${managerName}* 🎉`
-              : `Hi *${employeeName}*, your leave was *declined* by *${managerName}*.`,
-          },
-        },
-        {
-          type: "section",
-          fields: [
-            { type: "mrkdwn", text: `*Type:*\n${leaveType}` },
-            { type: "mrkdwn", text: `*Dates:*\n${startDate} → ${endDate}` },
-          ],
-        },
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: decision === "approved"
-              ? `Your Slack status has been set to OOO 🌴\n<${APP_URL}|View on Indexed LMS>`
-              : `Please speak to your manager.\n<${APP_URL}|View on Indexed LMS>`,
-          },
-        },
-      ]
-    );
+    await sendSlackDM(employeeEmail, `${emoji} Your leave has been ${decision}`, [
+      { type: "header", text: { type: "plain_text", text: `${emoji} Leave ${decision === "approved" ? "Approved" : "Rejected"}` } },
+      { type: "section", text: { type: "mrkdwn", text: decision === "approved" ? `Great news *${employeeName}*! Your leave has been *approved* by *${managerName}* 🎉` : `Hi *${employeeName}*, your leave was *declined* by *${managerName}*.` } },
+      { type: "section", fields: [
+        { type: "mrkdwn", text: `*Type:*\n${leaveType}` },
+        { type: "mrkdwn", text: `*Dates:*\n${startDate} → ${endDate}` },
+      ]},
+      { type: "section", text: { type: "mrkdwn", text: decision === "approved" ? `Slack OOO status set 🌴\n<${APP_URL}|View on LMS>` : `Speak to your manager.\n<${APP_URL}|View on LMS>` } },
+    ]);
 
-    // 4. Set OOO if approved
-    if (decision === "approved" && employeeEmail) {
-      await setSlackOOO(employeeEmail, leaveType, endDate);
-    }
+    // 4. OOO if approved
+    if (decision === "approved") await setSlackOOO(employeeEmail, leaveType, endDate);
 
+    console.log("Done:", employeeName, decision);
   } catch (e) {
-    console.error("Post-response error:", e);
+    console.error("Error after response:", e.message);
   }
 }
