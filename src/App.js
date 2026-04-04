@@ -42,6 +42,7 @@ async function callApi(endpoint, body) {
   } catch { return false; }
 }
 
+// ─── Shared primitives ────────────────────────────────────────────────────
 const Avatar = ({ user, size = 36 }) => {
   if (user?.profile?.photo) return <img src={user.profile.photo} alt="" style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0, border: "2px solid rgba(99,102,241,0.3)" }} />;
   const name = user?.name || "?";
@@ -51,7 +52,12 @@ const Avatar = ({ user, size = 36 }) => {
 };
 
 const StatusChip = ({ status }) => {
-  const map = { pending: ["#FEF3C7", "#92400E", "⏳ Pending"], approved: ["#D1FAE5", "#064E3B", "✅ Approved"], rejected: ["#FEE2E2", "#7F1D1D", "❌ Rejected"] };
+  const map = {
+    pending: ["#FEF3C7", "#92400E", "⏳ Pending"],
+    approved: ["#D1FAE5", "#064E3B", "✅ Approved"],
+    rejected: ["#FEE2E2", "#7F1D1D", "❌ Rejected"],
+    cancelled: ["#F1F5F9", "#475569", "🚫 Cancelled"],
+  };
   const [bg, color, label] = map[status] || map.pending;
   return <span style={{ background: bg, color, fontSize: 11, fontWeight: 700, padding: "4px 12px", borderRadius: 100, whiteSpace: "nowrap" }}>{label}</span>;
 };
@@ -80,16 +86,83 @@ const Btn = ({ children, variant = "primary", size = "md", ...props }) => {
     subtle: { background: C.indigoLight, color: C.indigoDark, border: "none" },
   };
   const sz = { sm: "7px 14px", md: "11px 22px", lg: "14px 32px" };
-  return <button {...props} style={{ padding: sz[size], borderRadius: 12, fontWeight: 700, fontSize: size === "sm" ? 12 : 14, cursor: "pointer", fontFamily: "inherit", ...vs[variant], ...(props.disabled ? { opacity: 0.5, cursor: "not-allowed" } : {}), ...props.style }}>{children}</button>;
+  return <button {...props} style={{ padding: sz[size], borderRadius: 12, fontWeight: 700, fontSize: size === "sm" ? 12 : 14, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", ...vs[variant], ...(props.disabled ? { opacity: 0.5, cursor: "not-allowed" } : {}), ...props.style }}>{children}</button>;
 };
 
-const GlassCard = ({ children, style }) => (
-  <div style={{ background: C.card, borderRadius: 20, border: `1px solid ${C.border}`, padding: 24, ...style }}>{children}</div>
+const GlassCard = ({ children, style, onClick }) => (
+  <div onClick={onClick} style={{ background: C.card, borderRadius: 20, border: `1px solid ${C.border}`, padding: 24, ...(onClick ? { cursor: "pointer", transition: "all 0.15s" } : {}), ...style }}>{children}</div>
 );
 
 const Toast = ({ toast }) => {
   if (!toast) return null;
-  return <div style={{ position: "fixed", bottom: 28, right: 28, zIndex: 9999, background: toast.type === "error" ? C.danger : C.dark, color: "#fff", padding: "14px 22px", borderRadius: 16, fontWeight: 700, fontSize: 14, maxWidth: 360, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", display: "flex", alignItems: "center", gap: 10 }}><span>{toast.type === "error" ? "⚠️" : "🎉"}</span>{toast.msg}</div>;
+  return <div style={{ position: "fixed", bottom: 28, right: 28, zIndex: 9999, background: toast.type === "error" ? C.danger : C.dark, color: "#fff", padding: "14px 22px", borderRadius: 16, fontWeight: 700, fontSize: 14, maxWidth: 360, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", display: "flex", alignItems: "center", gap: 10, animation: "slideUp 0.3s ease" }}><span>{toast.type === "error" ? "⚠️" : "🎉"}</span>{toast.msg}</div>;
+};
+
+// ─── Modal wrapper ────────────────────────────────────────────────────────
+const Modal = ({ children, onClose }) => (
+  <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, backdropFilter: "blur(4px)" }} onClick={e => e.target === e.currentTarget && onClose()}>
+    <div style={{ background: C.card, borderRadius: 24, padding: 36, width: 480, maxWidth: "90vw", boxShadow: "0 30px 80px rgba(0,0,0,0.3)", maxHeight: "90vh", overflowY: "auto" }}>
+      {children}
+    </div>
+  </div>
+);
+
+// ─── Leave detail / cancel modal ─────────────────────────────────────────
+const LeaveDetailModal = ({ r, users, session, onClose, onCancel, onDecide }) => {
+  if (!r) return null;
+  const emp = users.find(u => u.id === r.userId);
+  const mgr = users.find(u => u.id === r.managerId);
+  const days = Math.ceil((new Date(r.endDate) - new Date(r.startDate)) / 86400000) + 1;
+  const today = new Date().toISOString().split("T")[0];
+  const canCancel = r.status !== "cancelled" && r.status !== "rejected" && r.endDate >= today;
+  const isAdmin = session.role === "admin";
+  const isOwner = session.id === r.userId;
+
+  return (
+    <Modal onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
+        <span style={{ fontSize: 40 }}>{LEAVE_EMOJI[r.type] || "📋"}</span>
+        <div>
+          <h3 style={{ fontSize: 20, fontWeight: 900, color: C.text, margin: 0, letterSpacing: "-0.03em" }}>{r.type}</h3>
+          <p style={{ fontSize: 13, color: C.muted, margin: "3px 0 0" }}>{r.startDate} → {r.endDate} · {days} day{days !== 1 ? "s" : ""}</p>
+        </div>
+        <div style={{ marginLeft: "auto" }}><StatusChip status={r.status} /></div>
+      </div>
+
+      <div style={{ background: C.bg, borderRadius: 14, padding: "16px 18px", marginBottom: 20 }}>
+        {[
+          ["👤 Employee", emp?.name || "—"],
+          ["👔 Manager", mgr?.name || "Unassigned"],
+          ["📅 Start", r.startDate],
+          ["📅 End", r.endDate],
+          ["⏱ Duration", `${days} day${days !== 1 ? "s" : ""}`],
+          ["📋 Status", r.status],
+          ...(r.reason ? [["💬 Reason", r.reason]] : []),
+          ["🕐 Submitted", new Date(r.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+        ].map(([label, value]) => (
+          <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
+            <span style={{ color: C.muted, fontWeight: 600 }}>{label}</span>
+            <span style={{ color: C.text, fontWeight: 700, textAlign: "right", maxWidth: "60%" }}>{value}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {/* Manager/Admin approve or reject pending */}
+        {onDecide && r.status === "pending" && (isAdmin || session.id === r.managerId) && (
+          <>
+            <button onClick={() => { onDecide(r.id, "approved"); onClose(); }} style={{ flex: 1, padding: "11px", borderRadius: 12, background: G.emerald, color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>✅ Approve</button>
+            <button onClick={() => { onDecide(r.id, "rejected"); onClose(); }} style={{ flex: 1, padding: "11px", borderRadius: 12, background: C.dangerLight, color: C.danger, border: `1.5px solid ${C.danger}33`, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>❌ Reject</button>
+          </>
+        )}
+        {/* Cancel button — owner can cancel future leaves, admin can cancel any */}
+        {canCancel && (isOwner || isAdmin) && (
+          <button onClick={() => { onCancel(r.id, r); onClose(); }} style={{ flex: 1, padding: "11px", borderRadius: 12, background: "#F1F5F9", color: "#475569", border: "1.5px solid #CBD5E1", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>🚫 Cancel Leave</button>
+        )}
+        <button onClick={onClose} style={{ flex: 1, padding: "11px", borderRadius: 12, background: C.bg, color: C.muted, border: `1px solid ${C.border}`, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Close</button>
+      </div>
+    </Modal>
+  );
 };
 
 const NAV = [
@@ -140,6 +213,7 @@ const Sidebar = ({ session, page, nav, logout }) => {
   );
 };
 
+// ─── Main App ─────────────────────────────────────────────────────────────
 export default function App() {
   const [users, setUsers] = useState([]);
   const [requests, setRequests] = useState([]);
@@ -173,8 +247,7 @@ export default function App() {
     if (session && users.length > 0) {
       const fresh = users.find(u => u.id === session.id);
       if (fresh && JSON.stringify(fresh) !== JSON.stringify(session)) {
-        setSession(fresh);
-        sessionStorage.setItem("lms_session", JSON.stringify(fresh));
+        setSession(fresh); sessionStorage.setItem("lms_session", JSON.stringify(fresh));
       }
     }
   }, [users]);
@@ -184,9 +257,7 @@ export default function App() {
   const login = () => {
     const user = users.find(u => u.email === loginEmail && u.password === loginPass);
     if (!user) return setLoginError("Wrong email or password 👀");
-    setLoginError("");
-    setSession(user);
-    sessionStorage.setItem("lms_session", JSON.stringify(user));
+    setLoginError(""); setSession(user); sessionStorage.setItem("lms_session", JSON.stringify(user));
     setPage(user.mustChangePassword ? "changepass" : "dashboard");
   };
 
@@ -197,12 +268,10 @@ export default function App() {
     const tempPass = "Reset@" + Math.floor(1000 + Math.random() * 9000);
     await updateDoc(doc(db, "users", user.id), { password: tempPass, mustChangePassword: true });
     await callApi("notify", { type: "forgot", userName: user.name, userEmail: user.email, tempPassword: tempPass });
-    setLoginError(""); setLoginPass("");
-    notify("Password reset sent to your Slack & email 📧");
+    setLoginError(""); setLoginPass(""); notify("Password reset sent to Slack & email 📧");
   };
 
   const logout = () => { setSession(null); sessionStorage.removeItem("lms_session"); setPage("dashboard"); setLoginEmail(""); setLoginPass(""); };
-  const nav = p => setPage(p);
 
   if (loading) return (
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter,sans-serif" }}>
@@ -215,13 +284,13 @@ export default function App() {
   if (page === "changepass") return <ChangePassPage session={session} setSession={setSession} setPage={setPage} notify={notify} />;
 
   const live = users.find(u => u.id === session.id) || session;
-  const shared = { session: live, users, requests, settings, notify, nav };
+  const shared = { session: live, users, requests, settings, notify, nav: setPage };
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: C.bg, fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');*{box-sizing:border-box}@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}.pc{animation:fadeIn 0.25s ease}input:focus,select:focus,textarea:focus{border-color:${C.indigo}!important;box-shadow:0 0 0 3px rgba(99,102,241,0.12)}button:hover{opacity:0.88}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(99,102,241,0.3);border-radius:10px}`}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');*{box-sizing:border-box}@keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}.pc{animation:fadeIn 0.25s ease}input:focus,select:focus,textarea:focus{border-color:${C.indigo}!important;box-shadow:0 0 0 3px rgba(99,102,241,0.12)}button:hover{opacity:0.88}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(99,102,241,0.3);border-radius:10px}`}</style>
       <Toast toast={toast} />
-      <Sidebar session={live} page={page} nav={nav} logout={logout} />
+      <Sidebar session={live} page={page} nav={setPage} logout={logout} />
       <main style={{ flex: 1, padding: "32px 36px", overflow: "auto", background: `${G.mesh}, ${C.bg}` }}>
         <div className="pc" key={page}>
           {page === "dashboard" && <DashboardPage {...shared} />}
@@ -294,18 +363,53 @@ function ChangePassPage({ session, setSession, setPage, notify }) {
   );
 }
 
-function DashboardPage({ session, users, requests, nav }) {
+// ─── Dashboard ────────────────────────────────────────────────────────────
+function DashboardPage({ session, users, requests, notify, nav }) {
+  const [selectedRequest, setSelectedRequest] = useState(null);
+
   const my = requests.filter(r => r.userId === session.id).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  const counts = { total: my.length, approved: my.filter(r => r.status === "approved").length, pending: my.filter(r => r.status === "pending").length, rejected: my.filter(r => r.status === "rejected").length };
+  const counts = {
+    total: my.length,
+    approved: my.filter(r => r.status === "approved").length,
+    pending: my.filter(r => r.status === "pending").length,
+    rejected: my.filter(r => r.status === "rejected").length,
+  };
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const greetEmoji = hour < 12 ? "☀️" : hour < 17 ? "👋" : "🌙";
-  const pendingApprovals = (session.role === "manager" || session.role === "admin") ? requests.filter(r => r.managerId === session.id && r.status === "pending") : [];
+  const pendingApprovals = (session.role === "manager" || session.role === "admin")
+    ? requests.filter(r => r.managerId === session.id && r.status === "pending") : [];
   const today = new Date().toISOString().split("T")[0];
   const outToday = requests.filter(r => r.status === "approved" && r.startDate <= today && r.endDate >= today);
 
+  const cancelLeave = async (id, r) => {
+    if (!window.confirm("Cancel this leave request?")) return;
+    await updateDoc(doc(db, "requests", id), { status: "cancelled" });
+    notify("Leave cancelled 🚫");
+  };
+
+  const decide = async (id, decision) => {
+    const r = requests.find(r => r.id === id);
+    const emp = users.find(u => u.id === r?.userId);
+    await updateDoc(doc(db, "requests", id), { status: decision });
+    await callApi("notify", { type: "decision", decision, request: r, employeeName: emp?.name, employeeEmail: emp?.email, managerName: session.name });
+    notify(decision === "approved" ? "Approved! 🎉" : "Declined.");
+  };
+
   return (
     <div>
+      {selectedRequest && (
+        <LeaveDetailModal
+          r={selectedRequest}
+          users={users}
+          session={session}
+          onClose={() => setSelectedRequest(null)}
+          onCancel={cancelLeave}
+          onDecide={decide}
+        />
+      )}
+
+      {/* Hero */}
       <div style={{ background: G.indigo, borderRadius: 24, padding: "32px 36px", marginBottom: 24, position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", right: -20, top: -20, width: 200, height: 200, borderRadius: "50%", background: "rgba(255,255,255,0.06)" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 18, position: "relative", flexWrap: "wrap" }}>
@@ -321,9 +425,17 @@ function DashboardPage({ session, users, requests, nav }) {
         </div>
       </div>
 
+      {/* Stats — clickable */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
-        {[{ label: "Total", val: counts.total, icon: "📊", g: G.indigo }, { label: "Approved", val: counts.approved, icon: "✅", g: G.emerald }, { label: "Pending", val: counts.pending, icon: "⏳", g: G.amber }, { label: "Rejected", val: counts.rejected, icon: "❌", g: G.pink }].map(s => (
-          <div key={s.label} style={{ background: C.card, borderRadius: 18, padding: 20, border: `1px solid ${C.border}`, position: "relative", overflow: "hidden" }}>
+        {[
+          { label: "Total", val: counts.total, icon: "📊", g: G.indigo, filter: "all" },
+          { label: "Approved", val: counts.approved, icon: "✅", g: G.emerald, filter: "approved" },
+          { label: "Pending", val: counts.pending, icon: "⏳", g: G.amber, filter: "pending" },
+          { label: "Rejected", val: counts.rejected, icon: "❌", g: G.pink, filter: "rejected" },
+        ].map(s => (
+          <div key={s.label} onClick={() => nav("all_requests")} style={{ background: C.card, borderRadius: 18, padding: 20, border: `1px solid ${C.border}`, position: "relative", overflow: "hidden", cursor: "pointer", transition: "transform 0.15s, box-shadow 0.15s" }}
+            onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 8px 30px rgba(99,102,241,0.15)"; }}
+            onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = ""; }}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: s.g, borderRadius: "18px 18px 0 0" }} />
             <div style={{ width: 40, height: 40, borderRadius: 12, background: s.g, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, marginBottom: 12 }}>{s.icon}</div>
             <div style={{ fontSize: 32, fontWeight: 900, color: C.text, letterSpacing: "-0.04em", lineHeight: 1 }}>{s.val}</div>
@@ -333,16 +445,50 @@ function DashboardPage({ session, users, requests, nav }) {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+        {/* Recent requests — each row clickable */}
         <GlassCard>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 800, color: C.text, margin: 0 }}>📅 Recent Requests</h3>
-            <span style={{ fontSize: 12, color: C.muted }}>{my.length} total</span>
+            <h3 style={{ fontSize: 15, fontWeight: 800, color: C.text, margin: 0 }}>📅 My Leave Requests</h3>
+            <button onClick={() => nav("request")} style={{ fontSize: 12, color: C.indigo, fontWeight: 700, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>+ New</button>
           </div>
-          {my.length === 0
-            ? <div style={{ textAlign: "center", padding: "28px 0" }}><div style={{ fontSize: 36, marginBottom: 10 }}>🏖️</div><p style={{ color: C.muted, fontSize: 14, margin: 0 }}>No requests yet</p></div>
-            : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{my.slice(0, 4).map(r => { const d = Math.ceil((new Date(r.endDate) - new Date(r.startDate)) / 86400000) + 1; return <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 12, background: C.bg }}><span style={{ fontSize: 22 }}>{LEAVE_EMOJI[r.type] || "📋"}</span><div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{r.type}</div><div style={{ fontSize: 11, color: C.muted }}>{r.startDate} · {d}d</div></div><StatusChip status={r.status} /></div>; })}</div>
-          }
+          {my.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "28px 0" }}>
+              <div style={{ fontSize: 36, marginBottom: 10 }}>🏖️</div>
+              <p style={{ color: C.muted, fontSize: 14, margin: "0 0 12px" }}>No requests yet</p>
+              <button onClick={() => nav("request")} style={{ padding: "9px 18px", borderRadius: 10, background: G.indigo, color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Request leave ✈️</button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {my.slice(0, 5).map(r => {
+                const d = Math.ceil((new Date(r.endDate) - new Date(r.startDate)) / 86400000) + 1;
+                const today = new Date().toISOString().split("T")[0];
+                const canCancel = r.status !== "cancelled" && r.status !== "rejected" && r.endDate >= today;
+                return (
+                  <div key={r.id} onClick={() => setSelectedRequest(r)}
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 12, background: C.bg, cursor: "pointer", transition: "background 0.15s" }}
+                    onMouseEnter={e => e.currentTarget.style.background = C.indigoLight}
+                    onMouseLeave={e => e.currentTarget.style.background = C.bg}>
+                    <span style={{ fontSize: 22 }}>{LEAVE_EMOJI[r.type] || "📋"}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{r.type}</div>
+                      <div style={{ fontSize: 11, color: C.muted }}>{r.startDate} · {d}d</div>
+                    </div>
+                    <StatusChip status={r.status} />
+                    {canCancel && (
+                      <button onClick={e => { e.stopPropagation(); cancelLeave(r.id, r); }}
+                        style={{ fontSize: 11, color: "#475569", background: "#F1F5F9", border: "none", borderRadius: 8, padding: "4px 8px", cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>
+                        🚫
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              {my.length > 5 && <button onClick={() => nav("all_requests")} style={{ fontSize: 12, color: C.indigo, fontWeight: 700, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "6px 0", textAlign: "center" }}>View all {my.length} requests →</button>}
+            </div>
+          )}
         </GlassCard>
+
+        {/* Pending approvals or quick actions */}
         <GlassCard>
           {pendingApprovals.length > 0 ? (
             <>
@@ -351,18 +497,46 @@ function DashboardPage({ session, users, requests, nav }) {
                 <span style={{ background: "#FEE2E2", color: "#7F1D1D", fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 100 }}>{pendingApprovals.length} pending</span>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {pendingApprovals.slice(0, 4).map(r => { const emp = users.find(u => u.id === r.userId); const d = Math.ceil((new Date(r.endDate) - new Date(r.startDate)) / 86400000) + 1; return <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 12, background: C.bg }}><Avatar user={emp} size={30} /><div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{emp?.name?.split(" ")[0]}</div><div style={{ fontSize: 11, color: C.muted }}>{r.type} · {d}d</div></div><StatusChip status={r.status} /></div>; })}
+                {pendingApprovals.slice(0, 4).map(r => {
+                  const emp = users.find(u => u.id === r.userId);
+                  const d = Math.ceil((new Date(r.endDate) - new Date(r.startDate)) / 86400000) + 1;
+                  return (
+                    <div key={r.id} onClick={() => setSelectedRequest(r)}
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 12, background: C.bg, cursor: "pointer", transition: "background 0.15s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.indigoLight}
+                      onMouseLeave={e => e.currentTarget.style.background = C.bg}>
+                      <Avatar user={emp} size={30} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{emp?.name?.split(" ")[0]}</div>
+                        <div style={{ fontSize: 11, color: C.muted }}>{r.type} · {d}d</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button onClick={e => { e.stopPropagation(); decide(r.id, "approved"); }} style={{ padding: "5px 10px", borderRadius: 8, background: G.emerald, color: "#fff", border: "none", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✅</button>
+                        <button onClick={e => { e.stopPropagation(); decide(r.id, "rejected"); }} style={{ padding: "5px 10px", borderRadius: 8, background: C.dangerLight, color: C.danger, border: `1px solid ${C.danger}33`, fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>❌</button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {pendingApprovals.length > 4 && <button onClick={() => nav("approvals")} style={{ fontSize: 12, color: C.indigo, fontWeight: 700, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "6px 0", textAlign: "center" }}>View all {pendingApprovals.length} →</button>}
               </div>
             </>
           ) : (
             <>
               <h3 style={{ fontSize: 15, fontWeight: 800, color: C.text, margin: "0 0 18px" }}>🌟 Quick Actions</h3>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {[["✈️","Take some time off","request",C.indigo],["👤","Update your profile","profile",C.violet]].map(([icon,text,id,color]) => (
-                  <button key={id} onClick={() => nav(id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 12, background: C.bg, border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-                    <div style={{ width: 36, height: 36, borderRadius: 10, background: color + "20", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>{icon}</div>
+                {[
+                  ["✈️", "Request leave", "request", C.indigo],
+                  ["📋", "View all requests", "all_requests", C.violet],
+                  ["👤", "Update profile", "profile", C.cyan],
+                  ...(session.role === "admin" ? [["📊", "Leave analytics", "analytics", C.emerald]] : []),
+                ].map(([icon, text, id, color]) => (
+                  <button key={id} onClick={() => nav(id)}
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, background: C.bg, border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.15s" }}
+                    onMouseEnter={e => e.currentTarget.style.background = C.indigoLight}
+                    onMouseLeave={e => e.currentTarget.style.background = C.bg}>
+                    <div style={{ width: 34, height: 34, borderRadius: 10, background: color + "20", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>{icon}</div>
                     <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{text}</span>
-                    <span style={{ marginLeft: "auto", color: C.muted }}>→</span>
+                    <span style={{ marginLeft: "auto", color: C.muted, fontSize: 16 }}>→</span>
                   </button>
                 ))}
               </div>
@@ -371,11 +545,24 @@ function DashboardPage({ session, users, requests, nav }) {
         </GlassCard>
       </div>
 
+      {/* Who's out today — clickable */}
       {outToday.length > 0 && (
         <GlassCard>
           <h3 style={{ fontSize: 15, fontWeight: 800, color: C.text, margin: "0 0 14px" }}>🏖️ Out of Office Today</h3>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {outToday.map(r => { const emp = users.find(u => u.id === r.userId); return <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 100 }}><Avatar user={emp} size={24} /><span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{emp?.name?.split(" ")[0]}</span><span style={{ fontSize: 11, color: C.muted }}>{LEAVE_EMOJI[r.type]}</span></div>; })}
+            {outToday.map(r => {
+              const emp = users.find(u => u.id === r.userId);
+              return (
+                <div key={r.id} onClick={() => setSelectedRequest(r)}
+                  style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 100, cursor: "pointer", transition: "background 0.15s" }}
+                  onMouseEnter={e => e.currentTarget.style.background = C.indigoLight}
+                  onMouseLeave={e => e.currentTarget.style.background = C.bg}>
+                  <Avatar user={emp} size={24} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{emp?.name?.split(" ")[0]}</span>
+                  <span style={{ fontSize: 11 }}>{LEAVE_EMOJI[r.type]}</span>
+                </div>
+              );
+            })}
           </div>
         </GlassCard>
       )}
@@ -383,6 +570,7 @@ function DashboardPage({ session, users, requests, nav }) {
   );
 }
 
+// ─── Request Leave ────────────────────────────────────────────────────────
 function RequestPage({ session, users, notify }) {
   const [type, setType] = useState(LEAVE_TYPES[0]);
   const [start, setStart] = useState(""), [end, setEnd] = useState(""), [reason, setReason] = useState(""), [busy, setBusy] = useState(false);
@@ -431,8 +619,10 @@ function RequestPage({ session, users, notify }) {
   );
 }
 
+// ─── Approvals ────────────────────────────────────────────────────────────
 function ApprovalsPage({ session, users, requests, notify }) {
   const [filter, setFilter] = useState("all");
+  const [selectedRequest, setSelectedRequest] = useState(null);
   const reqs = requests.filter(r => r.managerId === session.id && (filter === "all" || r.status === filter)).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   const decide = async (id, decision) => {
@@ -440,15 +630,22 @@ function ApprovalsPage({ session, users, requests, notify }) {
     const emp = users.find(u => u.id === r?.userId);
     await updateDoc(doc(db, "requests", id), { status: decision });
     await callApi("notify", { type: "decision", decision, request: r, employeeName: emp?.name, employeeEmail: emp?.email, managerName: session.name });
-    notify(decision === "approved" ? `Approved! OOO set on Slack 🌴` : `Declined. ${emp?.name?.split(" ")[0]} notified.`);
+    notify(decision === "approved" ? `Approved! OOO set 🌴` : `Declined.`);
+  };
+
+  const cancelLeave = async (id) => {
+    if (!window.confirm("Cancel this leave?")) return;
+    await updateDoc(doc(db, "requests", id), { status: "cancelled" });
+    notify("Leave cancelled 🚫");
   };
 
   return (
     <div>
+      {selectedRequest && <LeaveDetailModal r={selectedRequest} users={users} session={session} onClose={() => setSelectedRequest(null)} onCancel={cancelLeave} onDecide={decide} />}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
         <div><h2 style={{ fontSize: 26, fontWeight: 900, color: C.text, margin: "0 0 4px", letterSpacing: "-0.04em" }}>Approvals 📋</h2><p style={{ color: C.muted, fontSize: 14, margin: 0 }}>Your team's leave requests</p></div>
         <div style={{ display: "flex", gap: 6 }}>
-          {["all","pending","approved","rejected"].map(f => <button key={f} onClick={() => setFilter(f)} style={{ padding: "7px 14px", borderRadius: 10, border: `1.5px solid ${filter === f ? C.indigo : C.border}`, background: filter === f ? C.indigoLight : "transparent", color: filter === f ? C.indigoDark : C.muted, fontWeight: filter === f ? 700 : 500, fontSize: 12, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>{f}</button>)}
+          {["all","pending","approved","rejected","cancelled"].map(f => <button key={f} onClick={() => setFilter(f)} style={{ padding: "7px 14px", borderRadius: 10, border: `1.5px solid ${filter === f ? C.indigo : C.border}`, background: filter === f ? C.indigoLight : "transparent", color: filter === f ? C.indigoDark : C.muted, fontWeight: filter === f ? 700 : 500, fontSize: 12, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>{f}</button>)}
         </div>
       </div>
       {reqs.length === 0
@@ -457,8 +654,10 @@ function ApprovalsPage({ session, users, requests, notify }) {
           {reqs.map(r => {
             const emp = users.find(u => u.id === r.userId);
             const days = Math.ceil((new Date(r.endDate) - new Date(r.startDate)) / 86400000) + 1;
+            const today = new Date().toISOString().split("T")[0];
+            const canCancel = r.status !== "cancelled" && r.status !== "rejected" && r.endDate >= today;
             return (
-              <GlassCard key={r.id} style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <GlassCard key={r.id} style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", cursor: "pointer" }} onClick={() => setSelectedRequest(r)}>
                 <Avatar user={emp} size={46} />
                 <div style={{ flex: 1 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{emp?.name}</span><StatusChip status={r.status} /></div>
@@ -467,14 +666,14 @@ function ApprovalsPage({ session, users, requests, notify }) {
                     <span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>{r.startDate} → {r.endDate}</span>
                     <span style={{ background: C.indigoLight, color: C.indigoDark, fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 100 }}>{days}d</span>
                   </div>
-                  {r.reason && <div style={{ fontSize: 12, color: C.muted, marginTop: 4, fontStyle: "italic" }}>"{r.reason}"</div>}
                 </div>
-                {r.status === "pending" && (
-                  <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8 }} onClick={e => e.stopPropagation()}>
+                  {r.status === "pending" && <>
                     <button onClick={() => decide(r.id, "approved")} style={{ padding: "9px 18px", borderRadius: 10, background: G.emerald, color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>✅ Approve</button>
                     <button onClick={() => decide(r.id, "rejected")} style={{ padding: "9px 18px", borderRadius: 10, background: C.dangerLight, color: C.danger, border: `1.5px solid ${C.danger}33`, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>❌ Reject</button>
-                  </div>
-                )}
+                  </>}
+                  {canCancel && <button onClick={() => cancelLeave(r.id)} style={{ padding: "9px 14px", borderRadius: 10, background: "#F1F5F9", color: "#475569", border: "1.5px solid #CBD5E1", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>🚫 Cancel</button>}
+                </div>
               </GlassCard>
             );
           })}
@@ -484,9 +683,11 @@ function ApprovalsPage({ session, users, requests, notify }) {
   );
 }
 
-function AllRequestsPage({ users, requests, notify }) {
+// ─── All Requests ─────────────────────────────────────────────────────────
+function AllRequestsPage({ session, users, requests, notify }) {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [selectedRequest, setSelectedRequest] = useState(null);
   const reqs = requests.filter(r => (filter === "all" || r.status === filter) && (!search || r.userName?.toLowerCase().includes(search.toLowerCase()) || r.type.toLowerCase().includes(search.toLowerCase()))).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   const decide = async (id, decision) => {
@@ -497,13 +698,23 @@ function AllRequestsPage({ users, requests, notify }) {
     notify(`Request ${decision} ✓`);
   };
 
+  const cancelLeave = async (id, r) => {
+    if (!window.confirm("Cancel this leave?")) return;
+    await updateDoc(doc(db, "requests", id), { status: "cancelled" });
+    // Notify employee
+    const emp = users.find(u => u.id === r?.userId);
+    await callApi("notify", { type: "decision", decision: "cancelled", request: r, employeeName: emp?.name, employeeEmail: emp?.email, managerName: "Admin" });
+    notify("Leave cancelled and employee notified 🚫");
+  };
+
   return (
     <div>
-      <div style={{ marginBottom: 28 }}><h2 style={{ fontSize: 26, fontWeight: 900, color: C.text, margin: "0 0 4px", letterSpacing: "-0.04em" }}>All Requests 🗂️</h2><p style={{ color: C.muted, fontSize: 14, margin: 0 }}>Full team leave overview</p></div>
+      {selectedRequest && <LeaveDetailModal r={selectedRequest} users={users} session={session} onClose={() => setSelectedRequest(null)} onCancel={cancelLeave} onDecide={decide} />}
+      <div style={{ marginBottom: 28 }}><h2 style={{ fontSize: 26, fontWeight: 900, color: C.text, margin: "0 0 4px", letterSpacing: "-0.04em" }}>All Requests 🗂️</h2><p style={{ color: C.muted, fontSize: 14, margin: 0 }}>Click any row to view details or cancel</p></div>
       <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Search…" style={{ ...inputSt, width: 220 }} />
         <div style={{ display: "flex", gap: 6 }}>
-          {["all","pending","approved","rejected"].map(f => <button key={f} onClick={() => setFilter(f)} style={{ padding: "9px 16px", borderRadius: 10, border: `1.5px solid ${filter === f ? C.indigo : C.border}`, background: filter === f ? C.indigoLight : "transparent", color: filter === f ? C.indigoDark : C.muted, fontWeight: filter === f ? 700 : 500, fontSize: 12, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>{f}</button>)}
+          {["all","pending","approved","rejected","cancelled"].map(f => <button key={f} onClick={() => setFilter(f)} style={{ padding: "9px 16px", borderRadius: 10, border: `1.5px solid ${filter === f ? C.indigo : C.border}`, background: filter === f ? C.indigoLight : "transparent", color: filter === f ? C.indigoDark : C.muted, fontWeight: filter === f ? 700 : 500, fontSize: 12, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>{f}</button>)}
         </div>
       </div>
       {reqs.length === 0 ? <GlassCard style={{ textAlign: "center", padding: "50px 24px" }}><div style={{ fontSize: 40, marginBottom: 10 }}>📭</div><p style={{ fontWeight: 700, color: C.text, margin: 0 }}>No requests found</p></GlassCard> : (
@@ -512,20 +723,23 @@ function AllRequestsPage({ users, requests, notify }) {
             const emp = users.find(u => u.id === r.userId);
             const mgr = users.find(u => u.id === r.managerId);
             const days = Math.ceil((new Date(r.endDate) - new Date(r.startDate)) / 86400000) + 1;
+            const today = new Date().toISOString().split("T")[0];
+            const canCancel = r.status !== "cancelled" && r.status !== "rejected" && r.endDate >= today;
             return (
-              <GlassCard key={r.id} style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", padding: "16px 20px" }}>
+              <GlassCard key={r.id} style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", padding: "16px 20px", cursor: "pointer" }} onClick={() => setSelectedRequest(r)}>
                 <Avatar user={emp} size={40} />
                 <div style={{ flex: 1 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{emp?.name}</span>{mgr && <span style={{ fontSize: 11, color: C.muted }}>→ {mgr.name}</span>}</div>
                   <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{LEAVE_EMOJI[r.type]} {r.type} · {r.startDate} → {r.endDate} · {days}d</div>
                 </div>
                 <StatusChip status={r.status} />
-                {r.status === "pending" && (
-                  <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ display: "flex", gap: 6 }} onClick={e => e.stopPropagation()}>
+                  {r.status === "pending" && <>
                     <button onClick={() => decide(r.id, "approved")} style={{ padding: "7px 14px", borderRadius: 8, background: G.emerald, color: "#fff", border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✅</button>
                     <button onClick={() => decide(r.id, "rejected")} style={{ padding: "7px 14px", borderRadius: 8, background: C.dangerLight, color: C.danger, border: `1.5px solid ${C.danger}33`, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>❌</button>
-                  </div>
-                )}
+                  </>}
+                  {canCancel && <button onClick={() => cancelLeave(r.id, r)} style={{ padding: "7px 12px", borderRadius: 8, background: "#F1F5F9", color: "#475569", border: "1.5px solid #CBD5E1", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>🚫</button>}
+                </div>
               </GlassCard>
             );
           })}
@@ -535,14 +749,15 @@ function AllRequestsPage({ users, requests, notify }) {
   );
 }
 
-// ─── Analytics Page ───────────────────────────────────────────────────────────
-function AnalyticsPage({ users, requests, notify }) {
+// ─── Analytics ────────────────────────────────────────────────────────────
+function AnalyticsPage({ users, requests }) {
   const [userFilter, setUserFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [period, setPeriod] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [selectedRequest, setSelectedRequest] = useState(null);
 
   const now = new Date();
   const periodStart = {
@@ -551,8 +766,6 @@ function AnalyticsPage({ users, requests, notify }) {
     last_month: new Date(now.getFullYear(), now.getMonth() - 1, 1),
     this_quarter: new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1),
     this_year: new Date(now.getFullYear(), 0, 1),
-    all: null,
-    custom: null,
   };
 
   const filtered = requests.filter(r => {
@@ -569,16 +782,13 @@ function AnalyticsPage({ users, requests, notify }) {
     return true;
   }).sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
 
-  const totalDays = filtered.filter(r => r.status === "approved").reduce((sum, r) => sum + Math.ceil((new Date(r.endDate) - new Date(r.startDate)) / 86400000) + 1, 0);
-
-  // Per-person stats
+  const totalDays = filtered.filter(r => r.status === "approved").reduce((s, r) => s + Math.ceil((new Date(r.endDate) - new Date(r.startDate)) / 86400000) + 1, 0);
   const perPerson = users.map(u => {
     const uReqs = filtered.filter(r => r.userId === u.id);
     const days = uReqs.filter(r => r.status === "approved").reduce((s, r) => s + Math.ceil((new Date(r.endDate) - new Date(r.startDate)) / 86400000) + 1, 0);
-    return { user: u, requests: uReqs.length, days, pending: uReqs.filter(r => r.status === "pending").length };
+    return { user: u, requests: uReqs.length, days };
   }).filter(p => p.requests > 0).sort((a, b) => b.days - a.days);
 
-  // Per type stats
   const perType = LEAVE_TYPES.map(t => ({
     type: t,
     count: filtered.filter(r => r.type === t).length,
@@ -588,30 +798,39 @@ function AnalyticsPage({ users, requests, notify }) {
   const maxDays = Math.max(...perPerson.map(p => p.days), 1);
   const maxTypeDays = Math.max(...perType.map(t => t.days), 1);
 
+  // fake session for modal (admin)
+  const fakeSession = { role: "admin", id: "admin" };
+
+  const cancelLeave = async (id) => {
+    if (!window.confirm("Cancel this leave?")) return;
+    await updateDoc(doc(db, "requests", id), { status: "cancelled" });
+  };
+
   return (
     <div>
+      {selectedRequest && <LeaveDetailModal r={selectedRequest} users={users} session={fakeSession} onClose={() => setSelectedRequest(null)} onCancel={cancelLeave} />}
       <div style={{ marginBottom: 28 }}>
         <h2 style={{ fontSize: 26, fontWeight: 900, color: C.text, margin: "0 0 4px", letterSpacing: "-0.04em" }}>Leave Analytics 📊</h2>
-        <p style={{ color: C.muted, fontSize: 14, margin: 0 }}>Filter, analyse and export leave data</p>
+        <p style={{ color: C.muted, fontSize: 14, margin: 0 }}>Filter and analyse leave data</p>
       </div>
 
-      {/* Filters */}
       <GlassCard style={{ marginBottom: 20 }}>
         <p style={{ fontSize: 12, fontWeight: 700, color: C.muted, margin: "0 0 14px", textTransform: "uppercase", letterSpacing: "0.07em" }}>🔍 Filters</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-          <Sel label="Team Member" value={userFilter} onChange={e => setUserFilter(e.target.value)} style={{ marginBottom: 0 }}>
+          <Sel label="Member" value={userFilter} onChange={e => setUserFilter(e.target.value)} style={{ marginBottom: 0 }}>
             <option value="all">All members</option>
             {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
           </Sel>
-          <Sel label="Leave Type" value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ marginBottom: 0 }}>
+          <Sel label="Type" value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ marginBottom: 0 }}>
             <option value="all">All types</option>
             {LEAVE_TYPES.map(t => <option key={t}>{t}</option>)}
           </Sel>
           <Sel label="Status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ marginBottom: 0 }}>
-            <option value="all">All statuses</option>
+            <option value="all">All</option>
             <option value="approved">Approved</option>
             <option value="pending">Pending</option>
             <option value="rejected">Rejected</option>
+            <option value="cancelled">Cancelled</option>
           </Sel>
           <Sel label="Period" value={period} onChange={e => setPeriod(e.target.value)} style={{ marginBottom: 0 }}>
             <option value="all">All time</option>
@@ -631,7 +850,6 @@ function AnalyticsPage({ users, requests, notify }) {
         )}
       </GlassCard>
 
-      {/* Summary stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
         {[
           { label: "Total Requests", val: filtered.length, icon: "📋", g: G.indigo },
@@ -642,19 +860,17 @@ function AnalyticsPage({ users, requests, notify }) {
           <div key={s.label} style={{ background: C.card, borderRadius: 16, padding: "18px 20px", border: `1px solid ${C.border}`, position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: s.g, borderRadius: "16px 16px 0 0" }} />
             <div style={{ width: 36, height: 36, borderRadius: 10, background: s.g, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, marginBottom: 10 }}>{s.icon}</div>
-            <div style={{ fontSize: 28, fontWeight: 900, color: C.text, letterSpacing: "-0.04em" }}>{s.val}</div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: C.text }}>{s.val}</div>
             <div style={{ fontSize: 12, color: C.muted, fontWeight: 600, marginTop: 2 }}>{s.label}</div>
           </div>
         ))}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-        {/* Per person breakdown */}
         <GlassCard>
           <h3 style={{ fontSize: 15, fontWeight: 800, color: C.text, margin: "0 0 18px" }}>👥 Days by Person</h3>
-          {perPerson.length === 0
-            ? <p style={{ color: C.muted, fontSize: 14, textAlign: "center", padding: "20px 0" }}>No data for selected filters</p>
-            : <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {perPerson.length === 0 ? <p style={{ color: C.muted, fontSize: 14, textAlign: "center", padding: "20px 0" }}>No data</p> : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {perPerson.map(p => (
                 <div key={p.user.id}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
@@ -668,85 +884,73 @@ function AnalyticsPage({ users, requests, notify }) {
                 </div>
               ))}
             </div>
-          }
+          )}
         </GlassCard>
-
-        {/* Per type breakdown */}
         <GlassCard>
           <h3 style={{ fontSize: 15, fontWeight: 800, color: C.text, margin: "0 0 18px" }}>🏷️ Days by Type</h3>
-          {perType.length === 0
-            ? <p style={{ color: C.muted, fontSize: 14, textAlign: "center", padding: "20px 0" }}>No data for selected filters</p>
-            : <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {perType.map((t, i) => {
-                const gradients = [G.indigo, G.emerald, G.amber, G.pink];
-                return (
-                  <div key={t.type}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                      <span style={{ fontSize: 18 }}>{LEAVE_EMOJI[t.type]}</span>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: C.text, flex: 1 }}>{t.type}</span>
-                      <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>{t.days}d · {t.count} req</span>
-                    </div>
-                    <div style={{ height: 6, background: C.bg, borderRadius: 100, overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${(t.days / maxTypeDays) * 100}%`, background: gradients[i % gradients.length], borderRadius: 100, transition: "width 0.5s ease" }} />
-                    </div>
+          {perType.length === 0 ? <p style={{ color: C.muted, fontSize: 14, textAlign: "center", padding: "20px 0" }}>No data</p> : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {perType.map((t, i) => (
+                <div key={t.type}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 18 }}>{LEAVE_EMOJI[t.type]}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: C.text, flex: 1 }}>{t.type}</span>
+                    <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>{t.days}d · {t.count} req</span>
                   </div>
-                );
-              })}
+                  <div style={{ height: 6, background: C.bg, borderRadius: 100, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${(t.days / maxTypeDays) * 100}%`, background: [G.indigo, G.emerald, G.amber, G.pink][i % 4], borderRadius: 100, transition: "width 0.5s ease" }} />
+                  </div>
+                </div>
+              ))}
             </div>
-          }
+          )}
         </GlassCard>
       </div>
 
-      {/* Full table */}
       <GlassCard>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <h3 style={{ fontSize: 15, fontWeight: 800, color: C.text, margin: 0 }}>📋 All Leave Records</h3>
-          <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>{filtered.length} records</span>
+          <span style={{ fontSize: 12, color: C.muted }}>{filtered.length} records · click to view/cancel</span>
         </div>
-        {filtered.length === 0
-          ? <p style={{ color: C.muted, fontSize: 14, textAlign: "center", padding: "28px 0" }}>No records match your filters</p>
-          : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                    {["Employee", "Type", "Start", "End", "Days", "Status", "Manager"].map(h => (
-                      <th key={h} style={{ textAlign: "left", padding: "8px 12px", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map(r => {
-                    const emp = users.find(u => u.id === r.userId);
-                    const mgr = users.find(u => u.id === r.managerId);
-                    const days = Math.ceil((new Date(r.endDate) - new Date(r.startDate)) / 86400000) + 1;
-                    return (
-                      <tr key={r.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                        <td style={{ padding: "10px 12px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <Avatar user={emp} size={26} />
-                            <span style={{ fontWeight: 600, color: C.text }}>{emp?.name || "—"}</span>
-                          </div>
-                        </td>
-                        <td style={{ padding: "10px 12px", color: C.text }}>{LEAVE_EMOJI[r.type]} {r.type}</td>
-                        <td style={{ padding: "10px 12px", color: C.muted }}>{r.startDate}</td>
-                        <td style={{ padding: "10px 12px", color: C.muted }}>{r.endDate}</td>
-                        <td style={{ padding: "10px 12px" }}><span style={{ background: C.indigoLight, color: C.indigoDark, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 100 }}>{days}d</span></td>
-                        <td style={{ padding: "10px 12px" }}><StatusChip status={r.status} /></td>
-                        <td style={{ padding: "10px 12px", color: C.muted }}>{mgr?.name || "—"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )
-        }
+        {filtered.length === 0 ? <p style={{ color: C.muted, fontSize: 14, textAlign: "center", padding: "28px 0" }}>No records match filters</p> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                  {["Employee", "Type", "Start", "End", "Days", "Status", "Manager"].map(h => (
+                    <th key={h} style={{ textAlign: "left", padding: "8px 12px", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(r => {
+                  const emp = users.find(u => u.id === r.userId);
+                  const mgr = users.find(u => u.id === r.managerId);
+                  const days = Math.ceil((new Date(r.endDate) - new Date(r.startDate)) / 86400000) + 1;
+                  return (
+                    <tr key={r.id} onClick={() => setSelectedRequest(r)} style={{ borderBottom: `1px solid ${C.border}`, cursor: "pointer", transition: "background 0.15s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.indigoLight}
+                      onMouseLeave={e => e.currentTarget.style.background = ""}>
+                      <td style={{ padding: "10px 12px" }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Avatar user={emp} size={26} /><span style={{ fontWeight: 600 }}>{emp?.name || "—"}</span></div></td>
+                      <td style={{ padding: "10px 12px" }}>{LEAVE_EMOJI[r.type]} {r.type}</td>
+                      <td style={{ padding: "10px 12px", color: C.muted }}>{r.startDate}</td>
+                      <td style={{ padding: "10px 12px", color: C.muted }}>{r.endDate}</td>
+                      <td style={{ padding: "10px 12px" }}><span style={{ background: C.indigoLight, color: C.indigoDark, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 100 }}>{days}d</span></td>
+                      <td style={{ padding: "10px 12px" }}><StatusChip status={r.status} /></td>
+                      <td style={{ padding: "10px 12px", color: C.muted }}>{mgr?.name || "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </GlassCard>
     </div>
   );
 }
 
+// ─── Admin ────────────────────────────────────────────────────────────────
 function AdminPage({ users, requests, settings, notify }) {
   const [tab, setTab] = useState("users");
   const [f, setF] = useState({ name: "", email: "", role: "member", manager: "" });
@@ -762,7 +966,7 @@ function AdminPage({ users, requests, settings, notify }) {
     const id = Date.now().toString();
     await setDoc(doc(db, "users", id), { id, name: f.name, email: f.email, password: pass, role: f.role, manager: f.manager || null, mustChangePassword: true, profile: {} });
     await callApi("notify", { type: "invite", userName: f.name, userEmail: f.email, tempPassword: pass });
-    notify(`${f.name} added! Invite sent via Slack & email 📧`);
+    notify(`${f.name} added! Invite sent 📧`);
     setF({ name: "", email: "", role: "member", manager: "" });
   };
 
@@ -774,33 +978,30 @@ function AdminPage({ users, requests, settings, notify }) {
 
   const saveEdit = async () => {
     await updateDoc(doc(db, "users", editing), { role: editF.role, manager: editF.manager || null });
-    notify("Member updated! ✅");
-    setEditing(null);
+    notify("Member updated! ✅"); setEditing(null);
   };
 
   return (
     <div>
       {editing && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, backdropFilter: "blur(4px)" }}>
-          <div style={{ background: C.card, borderRadius: 24, padding: 36, width: 440, boxShadow: "0 30px 80px rgba(0,0,0,0.3)" }}>
-            <div style={{ fontSize: 32, marginBottom: 12 }}>✏️</div>
-            <h3 style={{ fontSize: 20, fontWeight: 900, color: C.text, margin: "0 0 4px" }}>Edit Member</h3>
-            <p style={{ fontSize: 13, color: C.muted, margin: "0 0 24px" }}>{users.find(u => u.id === editing)?.name} · {users.find(u => u.id === editing)?.email}</p>
-            <Sel label="Role" icon="🎯" value={editF.role} onChange={e => setEditF({ ...editF, role: e.target.value })}>
-              <option value="member">Member</option>
-              <option value="manager">Manager</option>
-              <option value="admin">Admin</option>
-            </Sel>
-            <Sel label="Assign Manager" icon="👔" value={editF.manager} onChange={e => setEditF({ ...editF, manager: e.target.value })}>
-              <option value="">No manager</option>
-              {users.filter(u => u.id !== editing && (u.role === "manager" || u.role === "admin")).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </Sel>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={saveEdit} style={{ flex: 1, padding: 13, borderRadius: 12, background: G.indigo, color: "#fff", border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Save Changes</button>
-              <button onClick={() => setEditing(null)} style={{ flex: 1, padding: 13, borderRadius: 12, background: C.bg, color: C.muted, border: `1px solid ${C.border}`, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-            </div>
+        <Modal onClose={() => setEditing(null)}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>✏️</div>
+          <h3 style={{ fontSize: 20, fontWeight: 900, color: C.text, margin: "0 0 4px" }}>Edit Member</h3>
+          <p style={{ fontSize: 13, color: C.muted, margin: "0 0 24px" }}>{users.find(u => u.id === editing)?.name} · {users.find(u => u.id === editing)?.email}</p>
+          <Sel label="Role" icon="🎯" value={editF.role} onChange={e => setEditF({ ...editF, role: e.target.value })}>
+            <option value="member">Member</option>
+            <option value="manager">Manager</option>
+            <option value="admin">Admin</option>
+          </Sel>
+          <Sel label="Assign Manager" icon="👔" value={editF.manager} onChange={e => setEditF({ ...editF, manager: e.target.value })}>
+            <option value="">No manager</option>
+            {users.filter(u => u.id !== editing && (u.role === "manager" || u.role === "admin")).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </Sel>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={saveEdit} style={{ flex: 1, padding: 13, borderRadius: 12, background: G.indigo, color: "#fff", border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Save Changes</button>
+            <button onClick={() => setEditing(null)} style={{ flex: 1, padding: 13, borderRadius: 12, background: C.bg, color: C.muted, border: `1px solid ${C.border}`, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
           </div>
-        </div>
+        </Modal>
       )}
 
       <div style={{ marginBottom: 28 }}><h2 style={{ fontSize: 26, fontWeight: 900, color: C.text, margin: "0 0 4px", letterSpacing: "-0.04em" }}>Admin ⚙️</h2><p style={{ color: C.muted, fontSize: 14, margin: 0 }}>Manage your team and integrations</p></div>
@@ -846,28 +1047,22 @@ function AdminPage({ users, requests, settings, notify }) {
           <Inp label="Full Name" icon="👤" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="Jane Smith" />
           <Inp label="Work Email" icon="📧" type="email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} placeholder="jane@joinindexed.com" />
           <Sel label="Role" icon="🎯" value={f.role} onChange={e => setF({ ...f, role: e.target.value })}>
-            <option value="member">Member</option>
-            <option value="manager">Manager</option>
-            <option value="admin">Admin</option>
+            <option value="member">Member</option><option value="manager">Manager</option><option value="admin">Admin</option>
           </Sel>
           <Sel label="Assign Manager" icon="👔" value={f.manager} onChange={e => setF({ ...f, manager: e.target.value })}>
             <option value="">No manager</option>
             {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
           </Sel>
           <div style={{ background: "#FEF3C7", borderRadius: 12, padding: "12px 16px", marginBottom: 18, fontSize: 13, color: "#92400E", fontWeight: 600 }}>📧 Invite sent via Slack DM + email automatically.</div>
-          <button onClick={addUser} style={{ width: "100%", padding: 14, borderRadius: 14, background: G.indigo, color: "#fff", border: "none", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 8px 25px rgba(99,102,241,0.35)" }}>Add Member & Send Invite 🚀</button>
+          <button onClick={addUser} style={{ width: "100%", padding: 14, borderRadius: 14, background: G.indigo, color: "#fff", border: "none", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Add Member & Send Invite 🚀</button>
         </GlassCard>
       )}
 
       {tab === "slack" && (
         <GlassCard style={{ maxWidth: 560 }}>
           <h3 style={{ fontSize: 16, fontWeight: 800, color: C.text, margin: "0 0 8px" }}>💬 Slack Integration</h3>
-          <p style={{ fontSize: 13, color: C.muted, marginBottom: 18 }}>Slack DMs fire for all events. Approve/reject directly from Slack too.</p>
-          <div style={{ background: C.indigoLight, borderRadius: 12, padding: "14px 16px", marginBottom: 16, fontSize: 13, color: C.indigoDark, fontWeight: 600 }}>
-            <p style={{ margin: "0 0 6px", fontWeight: 800 }}>✅ Slack Approve/Reject from Slack</p>
-            <p style={{ margin: 0, fontWeight: 500, fontSize: 12 }}>Make sure your Slack App has <strong>Interactivity</strong> enabled with Request URL set to:<br /><code style={{ background: "rgba(99,102,241,0.15)", padding: "2px 6px", borderRadius: 4 }}>https://your-vercel-url.vercel.app/api/slack-actions</code></p>
-          </div>
-          <Inp label="Webhook URL (general channel)" icon="🔗" value={slack} onChange={e => setSlack(e.target.value)} placeholder="https://hooks.slack.com/services/..." />
+          <p style={{ fontSize: 13, color: C.muted, marginBottom: 18 }}>Slack DMs fire for all events. Approve/reject directly from Slack.</p>
+          <Inp label="Webhook URL" icon="🔗" value={slack} onChange={e => setSlack(e.target.value)} placeholder="https://hooks.slack.com/services/..." />
           <button onClick={async () => { await setDoc(doc(db, "settings", "main"), { slackWebhook: slack }, { merge: true }); notify("Slack saved! 💬"); }} style={{ width: "100%", padding: 14, borderRadius: 14, background: G.indigo, color: "#fff", border: "none", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Save Webhook 💬</button>
           {settings.slackWebhook && <div style={{ marginTop: 16, background: "#D1FAE5", borderRadius: 12, padding: "10px 16px", fontSize: 13, fontWeight: 700, color: "#064E3B", textAlign: "center" }}>✅ Slack is connected!</div>}
         </GlassCard>
@@ -876,6 +1071,7 @@ function AdminPage({ users, requests, settings, notify }) {
   );
 }
 
+// ─── Profile ──────────────────────────────────────────────────────────────
 function ProfilePage({ session, requests, setSession, notify }) {
   const saved = session.profile || {};
   const [p, setP] = useState({ photo: saved.photo || "", firstName: session.name.split(" ")[0] || "", lastName: session.name.split(" ").slice(1).join(" ") || "", birthdate: saved.birthdate || "", mobile: saved.mobile || "", city: saved.city || "", country: saved.country || "", jobTitle: saved.jobTitle || "", department: saved.department || "", emergencyName: saved.emergencyName || "", emergencyRelation: saved.emergencyRelation || "", emergencyPhone: saved.emergencyPhone || "", bio: saved.bio || "" });
