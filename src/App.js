@@ -171,6 +171,7 @@ const NAV = [
   { id: "approvals", label: "Approvals", icon: "📋", roles: ["admin", "manager"] },
   { id: "all_requests", label: "All Requests", icon: "🗂️", roles: ["admin"] },
   { id: "analytics", label: "Analytics", icon: "📊", roles: ["admin"] },
+  { id: "holidays", label: "Holidays", icon: "🎉", roles: ["admin", "manager", "member"] },
   { id: "admin", label: "Admin", icon: "⚙️", roles: ["admin"] },
   { id: "profile", label: "My Profile", icon: "👤", roles: ["admin", "manager", "member"] },
 ];
@@ -297,7 +298,7 @@ export default function App() {
           {page === "request" && <RequestPage {...shared} />}
           {page === "approvals" && <ApprovalsPage {...shared} />}
           {page === "all_requests" && live.role === "admin" && <AllRequestsPage {...shared} />}
-          {page === "analytics" && live.role === "admin" && <AnalyticsPage {...shared} />}
+          {page === "holidays" && <HolidaysPage {...shared} />}
           {page === "admin" && live.role === "admin" && <AdminPage {...shared} />}
           {page === "profile" && <ProfilePage {...shared} setSession={setSession} />}
         </div>
@@ -1065,6 +1066,204 @@ function AdminPage({ users, requests, settings, notify }) {
           <Inp label="Webhook URL" icon="🔗" value={slack} onChange={e => setSlack(e.target.value)} placeholder="https://hooks.slack.com/services/..." />
           <button onClick={async () => { await setDoc(doc(db, "settings", "main"), { slackWebhook: slack }, { merge: true }); notify("Slack saved! 💬"); }} style={{ width: "100%", padding: 14, borderRadius: 14, background: G.indigo, color: "#fff", border: "none", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Save Webhook 💬</button>
           {settings.slackWebhook && <div style={{ marginTop: 16, background: "#D1FAE5", borderRadius: 12, padding: "10px 16px", fontSize: 13, fontWeight: 700, color: "#064E3B", textAlign: "center" }}>✅ Slack is connected!</div>}
+        </GlassCard>
+      )}
+    </div>
+  );
+}
+
+// ─── Holidays Page ────────────────────────────────────────────────────────
+function HolidaysPage({ session, settings, notify }) {
+  const isAdmin = session.role === "admin";
+  const [holidays, setHolidays] = useState(() => {
+    try { return JSON.parse(settings.holidays || "[]"); } catch { return []; }
+  });
+  const [adding, setAdding] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [form, setForm] = useState({ date: "", name: "" });
+  const [saving, setSaving] = useState(false);
+
+  // Sync from settings when they load
+  useEffect(() => {
+    try {
+      const loaded = JSON.parse(settings.holidays || "[]");
+      setHolidays(loaded);
+    } catch {}
+  }, [settings.holidays]);
+
+  const saveToFirestore = async (updated) => {
+    setSaving(true);
+    await setDoc(doc(db, "settings", "main"), { holidays: JSON.stringify(updated) }, { merge: true });
+    setSaving(false);
+  };
+
+  const getDayName = (dateStr) => {
+    if (!dateStr) return "";
+    const d = new Date(dateStr + "T00:00:00");
+    return d.toLocaleDateString("en-GB", { weekday: "long" });
+  };
+
+  const sorted = [...holidays].sort((a, b) => a.date.localeCompare(b.date));
+
+  // Group by month
+  const byMonth = sorted.reduce((acc, h) => {
+    const month = h.date.substring(0, 7);
+    if (!acc[month]) acc[month] = [];
+    acc[month].push(h);
+    return acc;
+  }, {});
+
+  const addHoliday = async () => {
+    if (!form.date || !form.name.trim()) return notify("Date and name required", "error");
+    if (holidays.find(h => h.id === editId)) {
+      const updated = holidays.map(h => h.id === editId ? { ...h, date: form.date, name: form.name.trim() } : h);
+      setHolidays(updated);
+      await saveToFirestore(updated);
+      notify("Holiday updated ✅");
+    } else {
+      const newH = { id: Date.now().toString(), date: form.date, name: form.name.trim() };
+      const updated = [...holidays, newH];
+      setHolidays(updated);
+      await saveToFirestore(updated);
+      notify("Holiday added 🎉");
+    }
+    setForm({ date: "", name: "" }); setAdding(false); setEditId(null);
+  };
+
+  const deleteHoliday = async (id) => {
+    if (!window.confirm("Remove this holiday?")) return;
+    const updated = holidays.filter(h => h.id !== id);
+    setHolidays(updated);
+    await saveToFirestore(updated);
+    notify("Holiday removed");
+  };
+
+  const startEdit = (h) => {
+    setForm({ date: h.date, name: h.name });
+    setEditId(h.id);
+    setAdding(true);
+  };
+
+  const today = new Date().toISOString().split("T")[0];
+  const upcoming = sorted.filter(h => h.date >= today);
+  const nextHoliday = upcoming[0];
+
+  return (
+    <div style={{ maxWidth: 780 }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h2 style={{ fontSize: 26, fontWeight: 900, color: C.text, margin: "0 0 4px", letterSpacing: "-0.04em" }}>Company Holidays 🎉</h2>
+          <p style={{ color: C.muted, fontSize: 14, margin: 0 }}>{holidays.length} holiday{holidays.length !== 1 ? "s" : ""} · {isAdmin ? "Click any row to edit" : "Read-only view"}</p>
+        </div>
+        {isAdmin && (
+          <button onClick={() => { setAdding(true); setEditId(null); setForm({ date: "", name: "" }); }} style={{ padding: "10px 20px", borderRadius: 12, background: G.indigo, color: "#fff", border: "none", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 4px 15px rgba(99,102,241,0.3)" }}>
+            + Add Holiday
+          </button>
+        )}
+      </div>
+
+      {/* Add / Edit form */}
+      {adding && isAdmin && (
+        <GlassCard style={{ marginBottom: 20, border: `2px solid ${C.indigo}` }}>
+          <h3 style={{ fontSize: 15, fontWeight: 800, color: C.text, margin: "0 0 18px" }}>{editId ? "✏️ Edit Holiday" : "➕ New Holiday"}</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 14 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 7, letterSpacing: "0.07em", textTransform: "uppercase" }}>📅 Date</label>
+              <input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} style={inputSt} />
+              {form.date && <p style={{ fontSize: 12, color: C.indigo, fontWeight: 600, marginTop: 6 }}>{getDayName(form.date)}</p>}
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 7, letterSpacing: "0.07em", textTransform: "uppercase" }}>🎉 Holiday Name</label>
+              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Christmas Day" style={inputSt} onKeyDown={e => e.key === "Enter" && addHoliday()} />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+            <button onClick={addHoliday} disabled={saving} style={{ flex: 1, padding: "11px", borderRadius: 12, background: G.indigo, color: "#fff", border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+              {saving ? "Saving…" : editId ? "Update Holiday" : "Add Holiday"}
+            </button>
+            <button onClick={() => { setAdding(false); setEditId(null); setForm({ date: "", name: "" }); }} style={{ flex: 1, padding: "11px", borderRadius: 12, background: C.bg, color: C.muted, border: `1px solid ${C.border}`, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          </div>
+        </GlassCard>
+      )}
+
+      {/* Next upcoming holiday banner */}
+      {nextHoliday && (
+        <div style={{ background: G.indigo, borderRadius: 18, padding: "20px 24px", marginBottom: 24, display: "flex", alignItems: "center", gap: 16 }}>
+          <div style={{ fontSize: 36 }}>🎊</div>
+          <div>
+            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", margin: "0 0 3px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Next Holiday</p>
+            <p style={{ fontSize: 18, fontWeight: 900, color: "#fff", margin: "0 0 2px", letterSpacing: "-0.02em" }}>{nextHoliday.name}</p>
+            <p style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", margin: 0, fontWeight: 500 }}>{getDayName(nextHoliday.date)}, {new Date(nextHoliday.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</p>
+          </div>
+          <div style={{ marginLeft: "auto", textAlign: "right" }}>
+            <div style={{ fontSize: 28, fontWeight: 900, color: "#fff", letterSpacing: "-0.04em" }}>
+              {Math.ceil((new Date(nextHoliday.date) - new Date(today)) / 86400000)}
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>days away</div>
+          </div>
+        </div>
+      )}
+
+      {/* Holidays table */}
+      {holidays.length === 0 ? (
+        <GlassCard style={{ textAlign: "center", padding: "60px 24px" }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>📅</div>
+          <p style={{ fontWeight: 800, fontSize: 16, color: C.text, margin: "0 0 6px" }}>No holidays added yet</p>
+          <p style={{ color: C.muted, fontSize: 14, margin: "0 0 20px" }}>{isAdmin ? "Add your company holidays above." : "Ask an admin to add company holidays."}</p>
+        </GlassCard>
+      ) : (
+        <GlassCard style={{ padding: 0, overflow: "hidden" }}>
+          {Object.entries(byMonth).map(([month, hs]) => {
+            const monthLabel = new Date(month + "-01").toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+            return (
+              <div key={month}>
+                <div style={{ padding: "12px 24px", background: C.bg, borderBottom: `1px solid ${C.border}` }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>{monthLabel}</span>
+                </div>
+                {hs.map((h, i) => {
+                  const isPast = h.date < today;
+                  const isToday = h.date === today;
+                  return (
+                    <div key={h.id}
+                      onClick={() => isAdmin && startEdit(h)}
+                      style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 24px", borderBottom: i < hs.length - 1 ? `1px solid ${C.border}` : "none", opacity: isPast ? 0.5 : 1, cursor: isAdmin ? "pointer" : "default", transition: "background 0.15s", background: isToday ? C.indigoLight : "transparent" }}
+                      onMouseEnter={e => isAdmin && (e.currentTarget.style.background = isToday ? C.indigoLight : C.bg)}
+                      onMouseLeave={e => isAdmin && (e.currentTarget.style.background = isToday ? C.indigoLight : "transparent")}>
+
+                      {/* Date block */}
+                      <div style={{ width: 52, height: 52, borderRadius: 14, background: isToday ? C.indigo : isPast ? "#F1F5F9" : C.indigoLight, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: isToday ? "#fff" : isPast ? C.muted : C.indigoDark, lineHeight: 1 }}>
+                          {new Date(h.date + "T00:00:00").getDate()}
+                        </div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: isToday ? "rgba(255,255,255,0.7)" : isPast ? C.muted : C.indigo, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                          {new Date(h.date + "T00:00:00").toLocaleDateString("en-GB", { month: "short" })}
+                        </div>
+                      </div>
+
+                      {/* Info */}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{h.name}</span>
+                          {isToday && <span style={{ background: G.indigo, color: "#fff", fontSize: 10, fontWeight: 800, padding: "2px 10px", borderRadius: 100, letterSpacing: "0.05em" }}>TODAY</span>}
+                          {isPast && !isToday && <span style={{ background: "#F1F5F9", color: C.muted, fontSize: 10, fontWeight: 700, padding: "2px 10px", borderRadius: 100 }}>PAST</span>}
+                        </div>
+                        <div style={{ fontSize: 13, color: C.muted, marginTop: 2, fontWeight: 500 }}>{getDayName(h.date)}, {new Date(h.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</div>
+                      </div>
+
+                      {/* Admin actions */}
+                      {isAdmin && (
+                        <div style={{ display: "flex", gap: 8 }} onClick={e => e.stopPropagation()}>
+                          <button onClick={() => startEdit(h)} style={{ padding: "6px 12px", borderRadius: 8, background: C.indigoLight, color: C.indigoDark, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+                          <button onClick={() => deleteHoliday(h.id)} style={{ padding: "6px 12px", borderRadius: 8, background: C.dangerLight, color: C.danger, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>🗑️</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
         </GlassCard>
       )}
     </div>
