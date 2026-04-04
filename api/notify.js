@@ -80,6 +80,13 @@ export default async function handler(req, res) {
       await sendSlack(`👋 *${userName}* has joined Indexed LMS! Welcome to the team 🎉`);
     }
 
+    if (type === "forgot") {
+      await sendEmail(userEmail,
+        `🔑 Password reset — Indexed LMS`,
+        emailBase(`<h2>Password Reset 🔑</h2><p>Hi <strong>${userName}</strong>,</p><p>A password reset was requested for your Indexed LMS account.</p><div class="info-box"><div class="info-row"><span class="info-label">Login URL</span><span class="info-val"><a href="${APP_URL}" style="color:#6366F1">${APP_URL}</a></span></div><div class="info-row"><span class="info-label">Temp Password</span><span class="info-val" style="font-family:monospace;background:#F0F3FF;padding:2px 8px;border-radius:6px">${tempPassword}</span></div></div><p>⚡ You'll be asked to set a new password when you log in.</p><p style="text-align:center"><a href="${APP_URL}" class="btn" style="background:linear-gradient(135deg,#6366F1,#8B5CF6);color:#fff">Sign in →</a></p>`)
+      );
+    }
+
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.error(err);
