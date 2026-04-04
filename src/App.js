@@ -21,8 +21,6 @@ const SLACK_WEBHOOK = "";
 
 const SEED_USERS = [
   { id: "admin-main", name: "Admin", email: "admin@indexed.com", password: "Admin@2024", role: "admin", manager: null, mustChangePassword: false, profile: {} },
-  { id: "anjan-admin", name: "Anjan", email: "anjan@joinindexed.com", password: "Welcome@Anjan1", role: "admin", manager: null, mustChangePassword: true, profile: {} },
-  { id: "karan-admin", name: "Karan", email: "karan@joinindexed.com", password: "Welcome@Karan1", role: "admin", manager: null, mustChangePassword: true, profile: {} },
 ];
 
 // ─── Design tokens ─────────────────────────────────────────────────────────
